@@ -331,14 +331,21 @@ class NodeWindow(QWidget):
         # canvas: 380px circle of c1, blur(100px), opacity .2 idle / .42 on drop
         a = self.glow.value()
         rad = self.glow_r.value()
-        g = QRadialGradient(QPointF(CX, CY), rad)
+        g = QRadialGradient(QPointF(0, 0), rad)
         c = QColor(self.c1)
         for pos, k in ((0, 0.95), (0.3, 0.8), (0.55, 0.5), (0.8, 0.16), (1, 0)):
             c.setAlphaF(a * k)
             g.setColorAt(pos, QColor(c))
+        # The window is shorter than the big drop glow: squash it vertically so it fades out
+        # inside the window instead of being cut off by a hard edge.
+        ry = min(rad, H - CY - 2, CY - 2)
+        p.save()
+        p.translate(CX, CY)
+        p.scale(1.0, ry / rad if rad > 0 else 1.0)
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(g))
-        p.drawEllipse(QPointF(CX, CY), rad, rad)
+        p.drawEllipse(QPointF(0, 0), rad, rad)
+        p.restore()
 
     def _paint_shock(self, p: QPainter):
         k = self.shock.value()
