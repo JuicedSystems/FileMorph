@@ -29,7 +29,7 @@ if data.get("crash"):
 for name, value in bad.items():
     problems.append(f"{name}:\n{value}")
 if len(results) < 10:
-    problems.append(f"only {len(results)} checks ran (expected 15) - last step: {data.get('current_step')}")
+    problems.append(f"only {len(results)} checks ran (expected 15+) - last step: {data.get('current_step')}")
 tracer = data.get("svg_tracer")
 if tracer and "fallback" in tracer:
     print("\n  Note: SVG tracing used the built-in OpenCV tracer because the vtracer library failed on this\n"

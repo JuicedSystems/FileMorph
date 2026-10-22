@@ -31,8 +31,38 @@ def _report_crash(tb: str) -> None:
                 pass
 
 
+def _install_crash_logging() -> None:
+    """Errors inside Qt callbacks and worker threads never reach main()'s try/except, and a
+    windowed .exe has no stderr; log them (and native crashes) to crash.log instead."""
+    def log_exc(kind, exc_type, exc, tb):
+        try:
+            with open(_log_dir() / "crash.log", "a", encoding="utf-8") as f:
+                f.write(f"\n{time.strftime('%Y-%m-%d %H:%M:%S')}  {kind}\n"
+                        + "".join(traceback.format_exception(exc_type, exc, tb)))
+        except OSError:
+            pass
+
+    sys.excepthook = lambda t, e, tb: log_exc("unhandled error", t, e, tb)
+
+    import threading
+    threading.excepthook = lambda a: log_exc(f"error in thread {a.thread.name if a.thread else '?'}",
+                                             a.exc_type, a.exc_value, a.exc_traceback)
+    try:
+        import faulthandler
+        global _FAULT_LOG
+        path = _log_dir() / "native-crash.log"
+        if path.exists() and path.stat().st_size > 1_000_000:  # keep it from growing forever
+            path.unlink()
+        _FAULT_LOG = open(path, "a", encoding="utf-8")  # kept open
+        faulthandler.enable(_FAULT_LOG)
+    except (OSError, RuntimeError):
+        pass
+
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()  # pdf2docx / pandas may spawn helpers
+    if len(sys.argv) < 2 or sys.argv[1] != "--trace":  # the tracer child crashing is expected/handled
+        _install_crash_logging()
     try:
         from filemorph.app import main
         code = main()

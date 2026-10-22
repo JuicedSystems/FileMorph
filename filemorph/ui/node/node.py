@@ -313,7 +313,7 @@ class NodeWindow(QWidget):
         self._paint_aura(p, r)
         self._paint_inner(p, r, rad)
         if self.mode == "converting" and self.fill.value() > 0.001:
-            self._paint_fill(p, r)
+            self._paint_fill(p, r, rad)
         if self.mode == "picking":
             self._paint_chips(p, r)
         else:
@@ -394,7 +394,18 @@ class NodeWindow(QWidget):
         p.setBrush(QBrush(g))
         p.drawRoundedRect(inner, rr, rr)
 
-    def _paint_fill(self, p: QPainter, r: QRectF):
+    def _paint_fill(self, p: QPainter, r: QRectF, rad: float):
+        # Liquid stays inside the rim, so the colour ring is still visible near 100%
+        ins = max(self.inset.value(), 3.0)
+        inner = r.adjusted(ins, ins, -ins, -ins)
+        clip = QPainterPath()
+        clip.addRoundedRect(inner, max(0.0, rad - ins), max(0.0, rad - ins))
+        p.save()
+        p.setClipPath(clip, Qt.IntersectClip)
+        self._paint_liquid(p, r)
+        p.restore()
+
+    def _paint_liquid(self, p: QPainter, r: QRectF):
         h = r.height() * self.fill.value()
         top = r.bottom() - h
         p.setPen(Qt.NoPen)
@@ -437,13 +448,17 @@ class NodeWindow(QWidget):
             self._icon(p, [("M", 12, 4), ("v", 15), ("M", 6, 13), ("l", 6, 6), ("l", 6, -6)], 28, 2.0, white)
         elif self.mode == "converting":
             p.setFont(st.font(18, 600, mono=True))
+            txt = f"{round(self.progress * 100)}%"
+            box = QRectF(-60, -14, 120, 28)
+            p.setPen(QColor(0, 0, 0, 80))  # soft shadow keeps white legible on the light liquid
+            p.drawText(box.translated(0, 1.2), Qt.AlignCenter, txt)
             p.setPen(white)
-            p.drawText(QRectF(-60, -14, 120, 28), Qt.AlignCenter, f"{round(self.progress * 100)}%")
+            p.drawText(box, Qt.AlignCenter, txt)
         elif self.mode == "done":
             self._paint_check(p)
         elif self.mode == "error":
             self._glyph_xform(p)
-            self._icon(p, [("M", 12, 6.5), ("v", 7), ("M", 12, 17.2), ("v", 0.3)], 30, 2.4, QColor(st.DANGER))
+            self._icon(p, [("M", 12, 6), ("v", 7.5), ("M", 12, 17.4), ("v", 0.2)], 34, 2.6, QColor(st.DANGER))
         p.restore()
 
     def _icon(self, p: QPainter, cmds, size: float, width: float, color: QColor):

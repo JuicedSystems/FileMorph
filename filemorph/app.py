@@ -2,7 +2,7 @@
 
 Only one window runs at a time: launching again (e.g. Explorer's right-click menu
 on several files, which starts one process per file) hands the files to the
-running window. `--selftest <report.json>` checks the bundled engines and exits.
+running window through an inbox folder (see instance.py). `--selftest <report.json>` checks the bundled engines and exits.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import getpass
 import json
 import sys
 import tempfile
-import time
 import warnings
 from pathlib import Path
 
@@ -96,6 +95,19 @@ def selftest(report: Path) -> int:
                 raise RuntimeError(f"fonts missing in {base}")
         step("ui", ui_imports)
 
+        if sys.platform == "win32":
+            def windows_com():
+                # pywin32 drives Office and creates the "Send to" shortcut; a packaging slip here
+                # would otherwise only show up on users' PCs.
+                import pythoncom
+                import win32com.client
+                pythoncom.CoInitialize()
+                try:
+                    win32com.client.Dispatch("WScript.Shell")
+                finally:
+                    pythoncom.CoUninitialize()
+            step("windows-com", windows_com)
+
         from .core.converters.office import backend_name
         from .core.converters.tracing import LAST_TRACER
         data["office_backend"] = backend_name()
@@ -124,6 +136,11 @@ def run_velopack_hooks() -> None:
         shell.install()
 
     def after_update(version):
+        try:  # the portable zip shouldn't add itself to Explorer's menus
+            if velopack.UpdateManager().get_is_portable():
+                return
+        except Exception:
+            pass
         shell.install()  # refresh paths/icons in case they changed
 
     def before_uninstall(version):
@@ -164,9 +181,27 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
 
-    from PySide6.QtCore import QLockFile, QTimer, Qt
+    # --- single instance election (before any window code, so extra copies exit fast) ----------
+    from PySide6.QtCore import QLockFile
+    from . import instance
+    lock = QLockFile(str(Path(tempfile.gettempdir()) / f"{_ident()}.lock"))
+    lock.setStaleLockTime(0)  # only a dead owner process makes the lock stale
+    if "--new-window" not in argv and not lock.tryLock(0):
+        # A FileMorph is already running (or starting): leave our files in its inbox and exit.
+        if sys.platform == "win32":  # let it bring itself to the front
+            try:
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+            except Exception:
+                pass
+        try:
+            instance.post(files)
+            return 0
+        except OSError:
+            pass  # inbox not writable: fall through and run on our own
+
+    from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt
     from PySide6.QtGui import QIcon
-    from PySide6.QtNetwork import QLocalServer, QLocalSocket
     from PySide6.QtWidgets import QApplication
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -176,32 +211,6 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
 
-    # --- single instance election ------------------------------------------
-    name = _ident()
-    lock = QLockFile(str(Path(tempfile.gettempdir()) / f"{name}.lock"))
-    lock.setStaleLockTime(0)
-    primary = "--new-window" in argv or lock.tryLock(0)
-    if not primary:
-        # Another FileMorph owns the lock (possibly still starting up): hand our files over.
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            sock = QLocalSocket()
-            sock.connectToServer(name)
-            if sock.waitForConnected(200):
-                if sys.platform == "win32":  # let the running FileMorph bring itself to the front
-                    try:
-                        import ctypes
-                        ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
-                    except Exception:
-                        pass
-                sock.write(json.dumps(files).encode())
-                sock.flush()
-                sock.waitForBytesWritten(1000)
-                sock.disconnectFromServer()
-                return 0
-            time.sleep(0.1)
-        primary = True  # owner is unresponsive: run on our own
-
     # tidy up work folders a crash or forced exit left in %TEMP% (in the background)
     import threading
     from .core.engine import cleanup_stale_temp
@@ -210,10 +219,6 @@ def main(argv: list[str] | None = None) -> int:
     pending: list[str] = list(files)
     win = None
     classic = "--classic" in argv
-    server = QLocalServer()
-    server.setSocketOptions(QLocalServer.UserAccessOption)
-    QLocalServer.removeServer(name)
-    server.listen(name)
 
     def deliver(paths: list[str]):
         if win is None:
@@ -230,26 +235,22 @@ def main(argv: list[str] | None = None) -> int:
         else:
             win.expand()
 
-    def on_conn():
-        conn = server.nextPendingConnection()
-        buf = bytearray()
-
-        def read():
-            buf.extend(bytes(conn.readAll()))
-
-        def done():
-            buf.extend(bytes(conn.readAll()))  # data that arrived together with the disconnect
-            try:
-                paths = json.loads(buf.decode("utf-8") or "[]")
-                paths = [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
-            except ValueError:
-                paths = []
-            # several Explorer launches arrive back to back: the controller merges them into one batch
+    def check_inbox(*_):
+        try:
+            paths, seen = instance.drain()
+        except OSError:
+            return
+        if seen:
             deliver(paths)
-            conn.deleteLater()
-        conn.readyRead.connect(read)
-        conn.disconnected.connect(done)
-    server.newConnection.connect(on_conn)
+
+    try:
+        watcher = QFileSystemWatcher([str(instance.inbox_dir())])
+        watcher.directoryChanged.connect(check_inbox)
+    except OSError:
+        watcher = None
+    poll = QTimer(interval=1500, timeout=check_inbox)  # backstop if a change notification is missed
+    poll.start()
+    check_inbox()  # notes left by copies started while we were starting up
 
     from .ui import theme as th
     from .ui.widgets import app_icon_pixmap
@@ -273,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         if pending:
             win.receive_paths([Path(p) for p in pending])
     code = app.exec()
+    poll.stop()
     lock.unlock()
     return code
 

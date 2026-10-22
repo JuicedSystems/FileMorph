@@ -10,7 +10,7 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap,
                            QRadialGradient, QRegion)
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QScrollArea,
-                               QSizePolicy, QSlider, QStackedWidget, QVBoxLayout, QWidget)
+                               QSizePolicy, QSlider, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from ...core.formats import CATEGORIES, FORMATS
 from . import motion as mo
@@ -766,26 +766,7 @@ class PanelWindow(QWidget):
             heading("up", st.SWITCH_ON, f"Version {ver} is available", sub)
             notes = (kw.get("notes") or "").strip()
             L.addWidget(_label("WHAT'S NEW", 11, st.LABEL, 600, 0.08))
-            body = QLabel()
-            body.setTextFormat(Qt.MarkdownText)
-            body.setWordWrap(True)
-            body.setOpenExternalLinks(True)
-            body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            body.setText(notes or "Improvements and fixes.")
-            body.setFont(st.font(13))
-            body.setStyleSheet(f"color:{st.SOFT_TEXT};background:transparent;")
-            sc = QScrollArea()
-            sc.setWidget(body)
-            sc.setWidgetResizable(True)
-            sc.setFrameShape(QFrame.NoFrame)
-            sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            sc.setStyleSheet("QScrollArea{background:rgba(255,255,255,6);border-radius:12px}"
-                             "QScrollArea>QWidget>QWidget{background:transparent}"
-                             "QScrollBar:vertical{background:transparent;width:8px;margin:2px}"
-                             "QScrollBar::handle:vertical{background:rgba(255,255,255,40);border-radius:3px}"
-                             "QScrollBar::add-line,QScrollBar::sub-line,QScrollBar::add-page,QScrollBar::sub-page"
-                             "{height:0;background:none}")
-            body.setContentsMargins(12, 10, 12, 10)
+            sc = _NotesView(notes)
             L.addWidget(sc, 1)
             if kw.get("blocked"):
                 note = _label(kw["blocked"], 12, st.DIM)
@@ -812,7 +793,7 @@ class PanelWindow(QWidget):
             L.addWidget(self._upd_pct)
             L.addStretch(1)
         elif state == "error":
-            heading("alert", st.DANGER, "Update didn't work", kw.get("message", ""))
+            heading("alert", st.DANGER, kw.get("title") or "Update didn't work", kw.get("message", ""))
             L.addStretch(1)
             L.addWidget(self._secondary("Try again", self.update_check))
         elif state == "unavailable":
@@ -1025,6 +1006,31 @@ class _StatusIcon(QWidget):
             draw_icon(p, "upload", c, 20, self.color)
         else:
             draw_icon(p, self.name, c, 20, self.color, 2.0)
+
+
+class _NotesView(QTextBrowser):
+    """Release notes from CHANGELOG.md: compact lists, headings shown as bold lines."""
+
+    def __init__(self, notes: str):
+        super().__init__()
+        import re
+        text = notes or "Improvements and fixes."
+        text = re.sub(r"(?m)^[ \t]*#{1,6}[ \t]+(.+?)[ \t#]*$", r"**\1**", text)  # no giant headings
+        self.setOpenExternalLinks(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFont(st.font(13))
+        doc = self.document()
+        doc.setIndentWidth(14)
+        doc.setDocumentMargin(10)
+        doc.setDefaultStyleSheet(f"body{{color:{st.SOFT_TEXT}}} a{{color:{st.SOFT_TEXT}}} li{{margin-bottom:3px}}")
+        self.setMarkdown(text)
+        self.viewport().setAutoFillBackground(False)
+        self.setStyleSheet(f"QTextBrowser{{background:rgba(255,255,255,6);border-radius:12px;color:{st.SOFT_TEXT}}}"
+                           "QScrollBar:vertical{background:transparent;width:8px;margin:2px}"
+                           "QScrollBar::handle:vertical{background:rgba(255,255,255,40);border-radius:3px}"
+                           "QScrollBar::add-line,QScrollBar::sub-line,QScrollBar::add-page,QScrollBar::sub-page"
+                           "{height:0;background:none}")
 
 
 class _ProgressLine(QWidget):

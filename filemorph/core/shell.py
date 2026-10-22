@@ -36,6 +36,15 @@ def install(exe: str | None = None) -> None:
             winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _KEYS[2]) as k:
         winreg.SetValueEx(k, "FriendlyAppName", 0, winreg.REG_SZ, "FileMorph")
+    # SupportedTypes is what makes Windows offer FileMorph under "Open with" for these files
+    try:
+        from .formats import FORMATS
+        exts = sorted({e.lower() for f in FORMATS.values() for e in f.exts})
+    except Exception:
+        exts = []
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _KEYS[2] + r"\SupportedTypes") as k:
+        for e in exts:
+            winreg.SetValueEx(k, "." + e.lstrip("."), 0, winreg.REG_SZ, "")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _KEYS[2] + r"\shell\open\command") as k:
         winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd)
     try:
@@ -47,8 +56,8 @@ def install(exe: str | None = None) -> None:
         sc.IconLocation = f"{exe},0"
         sc.Description = "Convert with FileMorph"
         sc.Save()
-    except Exception:
-        pass  # Send-to is a nicety; never fail the install over it
+    except Exception as e:  # Send-to is a nicety; never fail the install over it
+        _log(f"Send to shortcut not created: {e!r}")
     _notify_shell()
 
 
@@ -75,6 +84,17 @@ def _delete_tree(winreg, root, path: str) -> None:
                     break
                 _delete_tree(winreg, root, path + "\\" + child)
         winreg.DeleteKey(root, path)
+    except OSError:
+        pass
+
+
+def _log(msg: str) -> None:
+    try:
+        import time
+        d = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "FileMorph" / "logs"
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "install.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
     except OSError:
         pass
 

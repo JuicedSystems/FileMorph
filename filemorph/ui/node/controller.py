@@ -364,7 +364,9 @@ class MorphController(QObject):
             return
         self.targets = self._ordered_targets(primary, common)
         pill = self.targets[:PILL_MAX]
-        more = len(self.targets) > PILL_MAX
+        # ••• also leads to the options (quality, combine into one PDF, ...) even when every
+        # format already fits in the pill.
+        more = len(self.targets) > PILL_MAX or any(self._options_for(t) for t in self.targets)
         badge, name = self._summary()
         self.node.show_picking(badge, name, [(k, FORMATS[k].ext.upper()) for k in pill], more)
 
@@ -603,7 +605,7 @@ class MorphController(QObject):
     def _update_checked(self, offer, err: str):
         cur = self.updater.current_version()
         if err:
-            self.panel.show_updates("error", current=cur, message=err)
+            self.panel.show_updates("error", current=cur, title="Couldn't check for updates", message=err)
         elif offer is None:
             self.panel.show_updates("current", current=cur)
         else:
@@ -621,7 +623,8 @@ class MorphController(QObject):
 
     def _update_downloaded(self, err: str):
         if err:
-            self.panel.show_updates("error", current=self.updater.current_version(), message=err)
+            self.panel.show_updates("error", current=self.updater.current_version(),
+                                    title="Couldn't download the update", message=err)
             return
         self.panel.show_updates("installing", current=self.updater.current_version(), version=self.offer.version)
         QTimer.singleShot(700, lambda: self._apply(lambda: self.updater.apply_and_restart(self.offer)))
@@ -634,13 +637,23 @@ class MorphController(QObject):
 
     def _apply(self, fn):
         """Hand over to Velopack: it closes FileMorph, swaps in the new version and relaunches it."""
+        if self._update_blocked():
+            # A conversion started while the update was downloading: Velopack exits the process
+            # immediately, so wait. The downloaded update stays ready for "Restart to update".
+            self.panel.show_updates("ready", current=self.updater.current_version(),
+                                    version=getattr(self.offer, "version", "") or (self.updater.pending_restart() or ""),
+                                    notes=getattr(self.offer, "notes_markdown", "") or "",
+                                    blocked=self._update_blocked())
+            return
+        self.settings.sync()
         try:
             self.tray.hide()
             fn()
         except UpdateError as e:
             if QSystemTrayIcon.isSystemTrayAvailable():
                 self.tray.show()
-            self.panel.show_updates("error", current=self.updater.current_version(), message=str(e))
+            self.panel.show_updates("error", current=self.updater.current_version(),
+                                    title="Couldn't install the update", message=str(e))
 
     def show_updated(self, version: str):
         """Called after Velopack relaunches us on a new version."""

@@ -102,6 +102,7 @@ jobs:
           $v = "${{ steps.ver.outputs.version }}"
           # previous release, so vpk can build a small delta update
           vpk download github --repoUrl "https://github.com/$env:RELEASE_REPO" --token "$env:RELEASE_TOKEN"
+          if (Test-Path "Releases\FileMorph-$v-full.nupkg") { throw "Version $v is already published - bump __version__" }
           # Code signing (recommended before public release) — add e.g.:
           #   --azureTrustedSignFile trusted-signing.json   or   --signParams "/td sha256 /fd sha256 /f cert.pfx /p ..."
           vpk pack --packId FileMorph --packVersion $v --packDir dist\FileMorph --mainExe FileMorph.exe `

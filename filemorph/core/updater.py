@@ -47,8 +47,8 @@ class Updater:
         except Exception as e:  # not installed via Velopack (running from source / portable copy)
             msg = str(e).lower()
             if "not properly installed" in msg or "does not exist" in msg:
-                self._why_unavailable = ("Updates are available in the installed app. "
-                                         "This copy is running from source.")
+                self._why_unavailable = ("This copy wasn't installed with FileMorph-win-Setup.exe, "
+                                         "so it can't update itself. Install it to get updates.")
             else:
                 self._why_unavailable = f"Updates aren't available: {str(e).splitlines()[0]}"
 
@@ -107,7 +107,10 @@ class Updater:
         """Install a version that was downloaded earlier ("Restart to update")."""
         if self._mgr is None:
             raise UpdateError(self._why_unavailable or "Updates aren't available.")
-        asset = self._mgr.get_update_pending_restart()
+        try:
+            asset = self._mgr.get_update_pending_restart()
+        except Exception as e:
+            raise UpdateError(_friendly(e, "install the update")) from e
         if asset is None:
             raise UpdateError("The downloaded update is no longer there. Check for updates again.")
         try:
@@ -148,17 +151,17 @@ def _friendly(e: Exception, action: str) -> str:
     full = str(e) or type(e).__name__
     text = full.splitlines()[0]
     low = full.lower()
+    # The panel's heading already says what failed ("Couldn't check for updates"); this is the why.
     # Most specific first: HTTP errors also mention "network" in their text.
-    if "404" in low or "not found" in low:
-        return (f"Couldn't {action}: no published updates were found. The release page may be "
-                "private or not set up yet.")
+    if "404" in low or (action == "check for updates" and "not found" in low):
+        return "No published updates were found. The release page may be private or not set up yet."
     if "401" in low or "403" in low or "rate limit" in low:
-        return f"Couldn't {action} right now (the update server refused or is busy). Try again later."
+        return "The update server is busy or refused the request. Try again in a few minutes."
     if "checksum" in low or "hash" in low or re.search(r"\bsha-?(1|256|512)?\b", low):
-        return "The update download was damaged. Please try again."
+        return "The download was damaged on the way. Please try again."
     if any(k in low for k in ("dns", "resolve", "connect", "timed out", "timeout", "network", "unreachable")):
-        return f"Couldn't {action} — check your internet connection and try again."
-    return f"Couldn't {action}. ({text})"
+        return "Check your internet connection and try again."
+    return f"Something went wrong ({text})."
 
 
 def human_size(n: int) -> str:

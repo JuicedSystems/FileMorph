@@ -17,7 +17,8 @@ if (-not (Test-Path .venv)) {
   $made = $false
   if (Get-Command py -ErrorAction SilentlyContinue) {
     foreach ($v in "3.12", "3.13") {
-      $installed = (& py --list | Out-String) -match "-V:$v|-$v"   # don't call a missing version
+      # 64-bit only ("-V:3.12" but not "-V:3.12-32"); don't call a version that isn't installed
+      $installed = (& py --list | Out-String) -match "(-V:|-)$([regex]::Escape($v))(-64)?(\s|\*)"
       if (-not $installed) { continue }
       & py "-$v" -m venv .venv
       if ($LASTEXITCODE -eq 0 -and (Test-Path .venv\Scripts\python.exe)) { $made = $true; Write-Host "Using Python $v"; break }
@@ -60,16 +61,27 @@ if (-not (Test-Path $report) -and (Test-Path $crash)) { Get-Content $crash }
 & $py packaging\check_selftest.py $report
 if ($LASTEXITCODE -ne 0) { throw "Self-test failed - see the lines above" }
 
-if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
-  $vp = & $py -c "import importlib.metadata as m; print(m.version('velopack'))"
-  dotnet tool install -g vpk --version $vp
-  if ($LASTEXITCODE -ne 0) { dotnet tool install -g vpk; Check "Installing vpk (needs the .NET SDK)" }
-  $tools = Join-Path $env:USERPROFILE ".dotnet\tools"   # new installs aren't on PATH until a new terminal
-  if ($env:PATH -notlike "*$tools*") { $env:PATH = "$env:PATH;$tools" }
+# vpk must match the app's velopack library version. `dotnet tool update` installs it if missing,
+# or moves an existing install to that version.
+$tools = Join-Path $env:USERPROFILE ".dotnet\tools"   # new installs aren't on PATH until a new terminal
+if ($env:PATH -notlike "*$tools*") { $env:PATH = "$env:PATH;$tools" }
+$vp = & $py -c "import importlib.metadata as m; print(m.version('velopack'))"
+dotnet tool update -g vpk --version $vp
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "vpk $vp isn't available; using the latest vpk instead." -ForegroundColor Yellow
+  dotnet tool update -g vpk
+  Check "Installing vpk (needs the .NET 8 SDK)"
 }
+
+# Start from a clean Releases folder, then fetch the latest published release so vpk can make a
+# small delta update from it.
+if (Test-Path Releases) { Remove-Item Releases -Recurse -Force }
 $tokenArgs = @(); if ($env:GITHUB_TOKEN) { $tokenArgs = @("--token", $env:GITHUB_TOKEN) }
-vpk download github --repoUrl $repoUrl @tokenArgs   # previous release -> small delta update
+vpk download github --repoUrl $repoUrl @tokenArgs
 if ($LASTEXITCODE -ne 0) { Write-Host "No previous release downloaded (fine for the first release) - building a full package only." -ForegroundColor Yellow }
+if (Test-Path "Releases\FileMorph-$version-full.nupkg") {
+  throw "Version $version is already published. Bump __version__ in filemorph\__init__.py (and add a CHANGELOG entry) first."
+}
 vpk pack --packId FileMorph --packVersion $version --packDir dist\FileMorph --mainExe FileMorph.exe `
          --packTitle FileMorph --icon assets\icon.ico --releaseNotes notes.md
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed" }
