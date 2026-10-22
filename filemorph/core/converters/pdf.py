@@ -29,21 +29,32 @@ def _page_paths(dst: Path, n: int) -> list[Path]:
 
 
 def pdf_to_images(src: Path, dst: Path, ctx: Ctx):
+    with open_pdf(src) as doc:
+        return _pdf_to_images(doc, dst, ctx)
+
+
+def _pdf_to_images(doc, dst: Path, ctx: Ctx):
     from PIL import Image
-    doc = open_pdf(src)
     dpi = int(ctx.opt("dpi", 150))
     q = int(ctx.opt("quality", 90))
     target = ctx.dst_fmt
     n = doc.page_count
 
     if target == "tiff":  # TIFF holds every page in one file
-        def render(i):
-            ctx.progress(i / n, f"Rendering page {i + 1} of {n}")
-            pix = doc[i].get_pixmap(dpi=dpi)
-            return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        # pages are rendered one at a time while writing, not all held in memory at once
-        render(0).save(dst, "TIFF", save_all=True, append_images=(render(i) for i in range(1, n)),
-                       compression="tiff_lzw")
+        from PIL import TiffImagePlugin
+        # Write page by page (Pillow's save_all would hold every rendered page in memory at once)
+        with open(dst, "w+b") as fh:
+            with TiffImagePlugin.AppendingTiffWriter(fh) as tf:
+                for i in range(n):
+                    ctx.progress(i / n, f"Rendering page {i + 1} of {n}")
+                    pix = doc[i].get_pixmap(dpi=dpi, alpha=False)
+                    page = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    page.encoderinfo = {"compression": "tiff_lzw"}
+                    page.encoderconfig = ()
+                    TiffImagePlugin._save(page, tf, str(dst))
+                    tf.newFrame()
+                tf.close()  # finish while the file is still open...
+                io.BytesIO.close(tf)  # ...and mark it closed, or garbage collection calls close() again
         return [dst]
 
     outs = _page_paths(dst, n)
@@ -61,36 +72,46 @@ def pdf_to_images(src: Path, dst: Path, ctx: Ctx):
 
 
 def pdf_to_svg(src: Path, dst: Path, ctx: Ctx):
-    doc = open_pdf(src)
-    outs = _page_paths(dst, doc.page_count)
-    for i, (page, out) in enumerate(zip(doc, outs)):
-        ctx.progress(i / doc.page_count, f"Page {i + 1} of {doc.page_count}")
-        out.write_text(page.get_svg_image(text_as_path=False), encoding="utf-8")
+    with open_pdf(src) as doc:
+        outs = _page_paths(dst, doc.page_count)
+        for i, (page, out) in enumerate(zip(doc, outs)):
+            ctx.progress(i / doc.page_count, f"Page {i + 1} of {doc.page_count}")
+            out.write_text(page.get_svg_image(text_as_path=False), encoding="utf-8")
     return outs
 
 
 def pdf_to_docx(src: Path, dst: Path, ctx: Ctx):
+    """pdf2docx is pure Python and can't be interrupted, so it runs in a child process that
+    Cancel can stop at once (and a crash in it can't take FileMorph down)."""
+    from .. import proc
     open_pdf(src).close()  # friendly errors for encrypted/broken files
-    from pdf2docx import Converter
-    import logging
-    # pdf2docx calls logging.basicConfig(level=INFO) on import and logs through the root logger;
-    # turn that back down instead of logging.disable(), which is process-wide and racy.
-    logging.getLogger().setLevel(logging.WARNING)
-    logging.getLogger("pdf2docx").setLevel(logging.ERROR)
     ctx.progress(0.05, "Analyzing layout")
-    cv = Converter(str(src))
+    proc.run(proc.child_cmd() + ["--pdf2docx", str(src), str(dst)], ctx, timeout=3600,
+             env=proc.child_env(), err_msg="This PDF couldn't be rebuilt as a Word document.")
+    if not dst.exists() or dst.stat().st_size == 0:
+        raise ConversionError("This PDF couldn't be rebuilt as a Word document.")
+
+
+def pdf2docx_child_main(src: str, dst: str) -> int:
+    """Runs inside `FileMorph.exe --pdf2docx src dst`."""
+    import logging
+    from pdf2docx import Converter
+    logging.getLogger().setLevel(logging.WARNING)  # pdf2docx sets the root logger to INFO on import
+    logging.getLogger("pdf2docx").setLevel(logging.ERROR)
+    cv = Converter(src)
     try:
-        cv.convert(str(dst), multi_processing=False)
+        cv.convert(dst, multi_processing=False)
     finally:
         cv.close()
+    return 0
 
 
 def pdf_to_txt(src: Path, dst: Path, ctx: Ctx):
-    doc = open_pdf(src)
     parts = []
-    for i, page in enumerate(doc):
-        ctx.progress(i / doc.page_count, f"Reading page {i + 1}")
-        parts.append(page.get_text("text", sort=True).rstrip())
+    with open_pdf(src) as doc:
+        for i, page in enumerate(doc):
+            ctx.progress(i / doc.page_count, f"Reading page {i + 1}")
+            parts.append(page.get_text("text", sort=True).rstrip())
     text = "\n\n".join(parts).strip()
     if not text:
         raise ConversionError("No text found — this PDF looks like a scan. Try converting it to an image instead.")
@@ -98,11 +119,11 @@ def pdf_to_txt(src: Path, dst: Path, ctx: Ctx):
 
 
 def pdf_to_html(src: Path, dst: Path, ctx: Ctx):
-    doc = open_pdf(src)
     body = []
-    for i, page in enumerate(doc):
-        ctx.progress(i / doc.page_count, f"Reading page {i + 1}")
-        body.append(f'<section class="page">{page.get_text("xhtml")}</section>')
+    with open_pdf(src) as doc:
+        for i, page in enumerate(doc):
+            ctx.progress(i / doc.page_count, f"Reading page {i + 1}")
+            body.append(f'<section class="page">{page.get_text("xhtml")}</section>')
     title = src.stem.replace("<", "")
     dst.write_text(
         f"<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>"
@@ -112,32 +133,53 @@ def pdf_to_html(src: Path, dst: Path, ctx: Ctx):
         + "\n".join(body) + "</body></html>", encoding="utf-8")
 
 
+_US_NUM = re.compile(r"^\(?-?\d{1,3}(,\d{3})+(\.\d+)?\)?$|^\(?-?\d+(\.\d+)?\)?$")
+_EU_NUM = re.compile(r"^\(?-?\d{1,3}(\.\d{3})+(,\d+)?\)?$|^\(?-?\d+,\d{1,2}\)?$")
+
+
 def _clean_cell(v):
-    """Text from a PDF cell -> (value, excel_number_format). Numbers become real numbers."""
+    """Text from a PDF cell -> (value, excel_number_format). Numbers become real numbers only when
+    nothing is lost: ZIP codes/IDs with leading zeros and very long digit runs stay text, and the
+    number of decimals shown is kept (3.50 stays 3.50)."""
     if v is None:
         return None, None
     v = re.sub(r"\s*\n\s*", " ", str(v)).strip()
     if not v:
         return None, None
-    num = v.replace(",", "").replace("$", "").replace("€", "").replace("£", "").replace("%", "").replace(" ", "")
-    if re.fullmatch(r"-?\(?\d+(\.\d+)?\)?", num):
-        neg = num.startswith("(") and num.endswith(")")
-        try:
-            f = float(num.strip("()"))
-        except ValueError:
-            return v, None
-        f = -f if neg else f
-        decimals = len(num.strip("()").split(".")[1]) if "." in num else 0
-        dec = ("." + "0" * decimals) if decimals else ""
-        if v.endswith("%"):
-            return f / 100, f"0{dec}%"
-        for sym in ("$", "€", "£"):
-            if sym in v:
-                return f, f'"{sym}"#,##0{dec}'
-        if "," in v:
-            return f, f"#,##0{dec}"
-        return (int(f) if f.is_integer() and not decimals else f), None
-    return v, None
+    sym = next((c for c in ("$", "€", "£") if c in v), "")
+    pct = v.endswith("%")
+    core = v.replace(sym, "").replace("%", "").replace(" ", "").replace("\u00a0", "")
+    digits = re.sub(r"\D", "", core)
+    if not digits or len(digits) > 15:
+        return v, None
+    if re.match(r"^\(?-?0\d", core):  # leading zero: an ID, not a number
+        return v, None
+    if _US_NUM.match(core):
+        plain = core.replace(",", "")
+        thousands = "," in core
+    elif _EU_NUM.match(core):
+        plain = core.replace(".", "").replace(",", ".")
+        thousands = "." in core
+    else:
+        return v, None
+    neg = plain.startswith("(") and plain.endswith(")")
+    plain = plain.strip("()")
+    try:
+        f = float(plain)
+    except ValueError:
+        return v, None
+    f = -f if neg else f
+    decimals = len(plain.split(".")[1]) if "." in plain else 0
+    dec = ("." + "0" * decimals) if decimals else ""
+    if pct:
+        return f / 100, f"0{dec}%"
+    if sym:
+        return f, f'"{sym}"#,##0{dec}'
+    if thousands:
+        return f, f"#,##0{dec}"
+    if decimals:
+        return f, f"0{dec}"
+    return int(f), None
 
 
 def pdf_to_xlsx(src: Path, dst: Path, ctx: Ctx):
@@ -189,18 +231,18 @@ def pdf_to_xlsx(src: Path, dst: Path, ctx: Ctx):
 
     if not found_any:
         # No tables: put the text into rows, splitting on runs of spaces
-        doc = open_pdf(src)
         ws = wb.create_sheet("Text")
         r = 1
-        for page in doc:
-            for line in page.get_text("text", sort=True).splitlines():
-                if line.strip():
-                    for ci, part in enumerate(re.split(r"\s{2,}", line.strip())):
-                        val, numfmt = _clean_cell(part)
-                        cell = ws.cell(row=r, column=ci + 1, value=val)
-                        if numfmt:
-                            cell.number_format = numfmt
-                    r += 1
+        with open_pdf(src) as doc:
+            for page in doc:
+                for line in page.get_text("text", sort=True).splitlines():
+                    if line.strip():
+                        for ci, part in enumerate(re.split(r"\s{2,}", line.strip())):
+                            val, numfmt = _clean_cell(part)
+                            cell = ws.cell(row=r, column=ci + 1, value=val)
+                            if numfmt:
+                                cell.number_format = numfmt
+                        r += 1
         if r == 1:
             raise ConversionError("No tables or text found — this PDF looks like a scan.")
     wb.save(dst)
@@ -210,17 +252,21 @@ def pdf_to_pptx(src: Path, dst: Path, ctx: Ctx):
     """Each page becomes a full-bleed slide image."""
     from pptx import Presentation
     from pptx.util import Emu
-    doc = open_pdf(src)
-    first = doc[0].rect
-    prs = Presentation()
-    prs.slide_width = Emu(int(first.width * 12700))
-    prs.slide_height = Emu(int(first.height * 12700))
-    blank = prs.slide_layouts[6]
-    for i, page in enumerate(doc):
-        ctx.progress(i / doc.page_count, f"Page {i + 1} of {doc.page_count}")
-        png = page.get_pixmap(dpi=170).tobytes("png")
-        slide = prs.slides.add_slide(blank)
-        slide.shapes.add_picture(io.BytesIO(png), 0, 0, prs.slide_width, prs.slide_height)
+    with open_pdf(src) as doc:
+        first = doc[0].rect
+        prs = Presentation()
+        sw, sh = int(first.width * 12700), int(first.height * 12700)
+        prs.slide_width, prs.slide_height = Emu(sw), Emu(sh)
+        blank = prs.slide_layouts[6]
+        for i, page in enumerate(doc):
+            ctx.progress(i / doc.page_count, f"Page {i + 1} of {doc.page_count}")
+            png = page.get_pixmap(dpi=170).tobytes("png")
+            slide = prs.slides.add_slide(blank)
+            # pages of a different shape (a landscape page in a portrait PDF) are fitted, not stretched
+            pw, ph = page.rect.width, page.rect.height
+            k = min(sw / pw, sh / ph)
+            w, h = int(pw * k), int(ph * k)
+            slide.shapes.add_picture(io.BytesIO(png), Emu((sw - w) // 2), Emu((sh - h) // 2), Emu(w), Emu(h))
     prs.save(dst)
 
 

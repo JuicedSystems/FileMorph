@@ -41,17 +41,8 @@ def trace_child_main(src: str, dst: str, detail: str) -> int:
     return 0 if Path(dst).exists() and Path(dst).stat().st_size > 0 else 1
 
 
-def _child_cmd() -> tuple[list[str], dict]:
-    env = dict(os.environ)
-    if getattr(sys, "frozen", False):
-        return [sys.executable], env            # FileMorph.exe itself
-    root = str(Path(__file__).resolve().parents[3])  # source checkout: make `-m filemorph` importable
-    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    return [sys.executable, "-m", "filemorph"], env
-
-
 def _trace_vtracer_isolated(png: Path, dst: Path, detail: str, ctx: Ctx) -> bool:
-    base, env = _child_cmd()
+    base, env = proc.child_cmd(), proc.child_env()
     try:
         p = proc.popen(base + ["--trace", str(png), str(dst), detail], stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, env=env, cwd=str(png.parent))

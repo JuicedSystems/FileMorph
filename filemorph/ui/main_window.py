@@ -355,6 +355,14 @@ class MainWindow(QWidget):
             self.settings.setValue("last_dir", str(Path(paths[0]).parent))
             self.add_files([Path(p) for p in paths], replace=self.stack.currentWidget() is not self.page_choose)
 
+    def receive_paths(self, paths: list[Path]):
+        """Files handed over from Explorer: queued during a conversion; a fresh batch on the
+        Done page; added to the selection only while choosing a format."""
+        if self.stack.currentWidget() is self.page_progress:
+            self._queued = getattr(self, "_queued", []) + list(paths)
+            return
+        self.add_files(paths, replace=self.stack.currentWidget() is not self.page_choose)
+
     def add_files(self, paths: list[Path], replace: bool = False):
         if self.stack.currentWidget() is self.page_progress:
             return
@@ -702,6 +710,7 @@ class MainWindow(QWidget):
         if cancelled:
             self.ring.reset()
             self.stack.setCurrentWidget(self.page_choose)
+            self._drain_queue()
             return
         self.ring.set_progress(1.0)
         QTimer.singleShot(250, self._show_results)
@@ -746,6 +755,12 @@ class MainWindow(QWidget):
         self.again_btn.setVisible(bool(self.files))
         self.stack.setCurrentWidget(self.page_done)
         QApplication.alert(self)  # flash the taskbar if the window is in the background
+        self._drain_queue()
+
+    def _drain_queue(self):
+        queued, self._queued = getattr(self, "_queued", []), []
+        if queued:
+            QTimer.singleShot(1500, lambda: self.add_files(queued, replace=True))
 
     def _again(self):
         self._populate_choose([])

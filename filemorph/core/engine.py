@@ -1,6 +1,8 @@
 """Runs a conversion plan for one file (or merges several into one PDF)."""
 from __future__ import annotations
 
+import errno
+import os
 import shutil
 import tempfile
 import threading
@@ -83,14 +85,14 @@ def _suffixed(name: str, is_dir: bool, n: int) -> str:
         return name
     p = Path(name)
     if is_dir and name.endswith("_media"):
-        return f"{name[:-6]} ({n})_media"
+        return f"{name[:-6]}-{n}_media"  # media folder names stay link-safe (no spaces/brackets)
     if is_dir:
         return f"{name} ({n})"
     return f"{p.stem} ({n}){p.suffix}"
 
 
 def _free_names(produced: list[Path], out_dir: Path) -> list[Path]:
-    """One shared ' (n)' suffix for the whole set, so 'Report - 1.png, Report - 2.png' and a
+    """One shared suffix for the whole set, so 'Report - page 1.png, Report - page 2.png' and a
     Markdown file with its media folder keep matching names."""
     n = 0
     while True:
@@ -100,33 +102,74 @@ def _free_names(produced: list[Path], out_dir: Path) -> list[Path]:
         n += 1
 
 
-def _relink_markdown(produced: list[Path], targets: list[Path]) -> None:
-    """If a media folder had to be renamed, point the Markdown file's links at the new name."""
-    from urllib.parse import quote
+def _relink_markdown(produced: list[Path], targets: list[Path]) -> dict[Path, str]:
+    """If a media folder gets a new name, point the Markdown file's links at it.
+    Returns the original texts so a failed publish can undo the edit."""
     renames = {p.name: t.name for p, t in zip(produced, targets) if p.is_dir() and p.name != t.name}
+    originals: dict[Path, str] = {}
     if not renames:
-        return
+        return originals
     for p in produced:
         if p.suffix.lower() == ".md" and p.is_file():
             text = p.read_text(encoding="utf-8")
+            originals[p] = text
             for a, b in renames.items():
-                text = text.replace(quote(a) + "/", quote(b) + "/").replace(a + "/", b + "/")
+                text = text.replace(a + "/", b + "/")
             p.write_text(text, encoding="utf-8")
+    return originals
+
+
+def _remove(path: Path) -> None:
+    try:
+        shutil.rmtree(path) if path.is_dir() and not path.is_symlink() else path.unlink()
+    except OSError:
+        pass
+
+
+def _place(src: Path, target: Path) -> str:
+    """Put one result in place without ever leaving a half-written file under the real name.
+    Same drive: an instant rename. Other drive: copy to a hidden temp name, then rename.
+    Returns how it was placed, for rollback."""
+    try:
+        os.rename(src, target)
+        return "renamed"
+    except OSError as e:
+        if getattr(e, "errno", None) != errno.EXDEV and getattr(e, "winerror", None) != 17:
+            raise  # not a cross-drive move: a real failure (permissions, disk full...)
+    part = target.with_name(f".{target.name}.filemorph-part")
+    try:
+        if src.is_dir():
+            shutil.copytree(src, part)
+        else:
+            shutil.copy2(src, part)
+        os.replace(part, target)
+    except BaseException:
+        _remove(part)
+        raise
+    return "copied"
 
 
 def _publish_into(produced: list[Path], out_dir: Path) -> list[Path]:
+    """All or nothing: either every result is in out_dir, or none is and the temp copies are intact."""
     out_dir.mkdir(parents=True, exist_ok=True)
     targets = _free_names(produced, out_dir)
-    _relink_markdown(produced, targets)
-    done: list[Path] = []
+    originals = _relink_markdown(produced, targets)
+    placed: list[tuple[Path, Path, str]] = []
     try:
         for p, t in zip(produced, targets):
-            shutil.move(str(p), str(t))
-            done.append(t)
+            placed.append((p, t, _place(p, t)))
     except BaseException:
-        for t in done:  # all or nothing: never leave half a result behind
+        for p, t, how in reversed(placed):
+            if how == "renamed":
+                try:
+                    os.rename(t, p)  # back to the temp folder, ready for the fallback location
+                except OSError:
+                    pass
+            else:
+                _remove(t)
+        for f, text in originals.items():
             try:
-                shutil.rmtree(t) if t.is_dir() else t.unlink()
+                f.write_text(text, encoding="utf-8")
             except OSError:
                 pass
         raise
@@ -147,7 +190,6 @@ def _publish(produced: list[Path], out_dir: Path) -> list[Path]:
             same = False
         if same:
             raise
-        produced = [p for p in produced if p.exists()]
         return _publish_into(produced, fb)
 
 
@@ -188,6 +230,8 @@ def merge_to_pdf(srcs: list[Path], out_path: Path, options: dict | None = None,
         merged = pymupdf.open()
         n = len(srcs)
         for i, s in enumerate(srcs):
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
             fmt = detect(s)
             if fmt is None:
                 raise ConversionError(f"{s.name}: this file type isn't recognised.")
@@ -208,6 +252,8 @@ def merge_to_pdf(srcs: list[Path], out_path: Path, options: dict | None = None,
         tmp_out.parent.mkdir(parents=True, exist_ok=True)
         merged.save(tmp_out, garbage=3, deflate=True)
         merged.close()
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
         return _publish([tmp_out], out_path.parent)
     except (ConversionError, Cancelled):
         raise

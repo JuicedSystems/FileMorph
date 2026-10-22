@@ -63,7 +63,9 @@ def _run_ffmpeg(args: list[str], src: Path, ctx: Ctx, duration: float, label: st
                 ctx.progress(us / 1e6 / duration, label)
     cmd = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats",
            "-i", str(src), *args]
-    proc.run(cmd, ctx, on_line=on_line, err_msg="The media file couldn't be converted.")
+    # No fixed time limit for long videos: only stop if ffmpeg stops reporting progress for 10 min
+    proc.run(cmd, ctx, on_line=on_line, err_msg="The media file couldn't be converted.",
+             timeout=600, idle_timeout=True)
 
 
 def to_audio(src: Path, dst: Path, ctx: Ctx):

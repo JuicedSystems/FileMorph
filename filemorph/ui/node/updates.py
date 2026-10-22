@@ -61,6 +61,7 @@ class UpdateRunner(QObject):
         job.checked.connect(self._finish)
         job.downloaded.connect(self._finish)
         self.thread.finished.connect(job.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
     def _finish(self, *_):

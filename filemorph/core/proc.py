@@ -129,8 +129,11 @@ def kill_all(final: bool = False) -> None:
 
 
 def run_capture(args: list[str], ctx: Ctx | None = None, *, cwd: Path | None = None, timeout: float = 1800,
-                on_line: Callable[[str], None] | None = None, env: dict | None = None) -> tuple[int, str, str]:
-    """Run a tool to completion; returns (exit code, stdout, stderr). Raises Cancelled / ConversionError(timeout)."""
+                on_line: Callable[[str], None] | None = None, env: dict | None = None,
+                idle_timeout: bool = False) -> tuple[int, str, str]:
+    """Run a tool to completion; returns (exit code, stdout, stderr). Raises Cancelled / ConversionError(timeout).
+    idle_timeout=True: `timeout` counts from the tool's last line of output (for long encodes that
+    report progress), instead of from the start."""
     p = popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
               text=True, encoding="utf-8", errors="replace", env=env or _env())
     lines: queue.Queue = queue.Queue()
@@ -154,7 +157,9 @@ def run_capture(args: list[str], ctx: Ctx | None = None, *, cwd: Path | None = N
             try:
                 while True:
                     line = lines.get_nowait()
-                    on_line(line)  # progress callbacks run on this (worker) thread
+                    if idle_timeout:
+                        start = time.monotonic()
+                    on_line(line)  # progress callbacks run on this (worker) thread; may raise Cancelled
             except queue.Empty:
                 pass
             if p.poll() is not None:
@@ -173,15 +178,21 @@ def run_capture(args: list[str], ctx: Ctx | None = None, *, cwd: Path | None = N
         while not lines.empty():
             on_line(lines.get_nowait())
         return p.returncode, "".join(out_chunks), "".join(err_chunks)
+    except BaseException:
+        # Cancelled raised from a progress callback, or anything else: never leave the tool running
+        if p.poll() is None:
+            kill_tree(p)
+        raise
     finally:
         _forget(p)
 
 
 def run(args: list[str], ctx: Ctx | None = None, *, cwd: Path | None = None, timeout: float = 1800,
         on_line: Callable[[str], None] | None = None, err_msg: str = "The conversion tool failed.",
-        env: dict | None = None) -> str:
+        env: dict | None = None, idle_timeout: bool = False) -> str:
     """Run a tool, honour cancellation, raise ConversionError with stderr on failure."""
-    code, out, err = run_capture(args, ctx, cwd=cwd, timeout=timeout, on_line=on_line, env=env)
+    code, out, err = run_capture(args, ctx, cwd=cwd, timeout=timeout, on_line=on_line, env=env,
+                                 idle_timeout=idle_timeout)
     if code != 0:
         detail = (err or "").strip().splitlines()[-3:]
         raise ConversionError(err_msg + (f"\n\nDetails: {' '.join(detail)}" if detail else ""))
@@ -201,6 +212,21 @@ def offline_env() -> dict:
         env[k] = "http://127.0.0.1:9"  # discard port: nothing listens
     env.pop("no_proxy", None)
     env.pop("NO_PROXY", None)
+    return env
+
+
+def child_cmd() -> list[str]:
+    """Command that re-runs FileMorph itself as a helper process (frozen .exe or `python -m`)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    return [sys.executable, "-m", "filemorph"]
+
+
+def child_env() -> dict:
+    env = _env()
+    if not getattr(sys, "frozen", False):  # source checkout: make `-m filemorph` importable
+        root = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return env
 
 

@@ -168,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     if len(argv) >= 5 and argv[1] == "--trace":  # isolated vector-tracing helper (see core/converters/tracing.py)
         from .core.converters.tracing import trace_child_main
         return trace_child_main(argv[2], argv[3], argv[4])
+    if len(argv) >= 4 and argv[1] == "--pdf2docx":  # isolated PDF -> Word helper (see converters/pdf.py)
+        from .core.converters.pdf import pdf2docx_child_main
+        return pdf2docx_child_main(argv[2], argv[3])
     if "--selftest" in argv:
         i = argv.index("--selftest")
         return selftest(Path(argv[i + 1]) if len(argv) > i + 1 else Path("selftest.json"))
@@ -186,7 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     from . import instance
     lock = QLockFile(str(Path(tempfile.gettempdir()) / f"{_ident()}.lock"))
     lock.setStaleLockTime(0)  # only a dead owner process makes the lock stale
-    if "--new-window" not in argv and not lock.tryLock(0):
+    owns_lock = "--new-window" not in argv and lock.tryLock(0)
+    if "--new-window" not in argv and not owns_lock:
         # A FileMorph is already running (or starting): leave our files in its inbox and exit.
         if sys.platform == "win32":  # let it bring itself to the front
             try:
@@ -195,10 +199,13 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
         try:
-            instance.post(files)
-            return 0
+            if instance.wait_taken(instance.post(files)):
+                return 0
         except OSError:
-            pass  # inbox not writable: fall through and run on our own
+            pass  # inbox not writable
+        # Nobody picked the files up (the running copy is hung or just quitting): open our own
+        # window rather than losing them. Take over the lock if its owner has gone meanwhile.
+        owns_lock = lock.tryLock(0)
 
     from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt
     from PySide6.QtGui import QIcon
@@ -226,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             return
         if classic:
             if paths:
-                win.add_files([Path(p) for p in paths], replace=False)
+                win.receive_paths([Path(p) for p in paths])
             win.showNormal()
             win.raise_()
             win.activateWindow()
@@ -243,14 +250,17 @@ def main(argv: list[str] | None = None) -> int:
         if seen:
             deliver(paths)
 
-    try:
-        watcher = QFileSystemWatcher([str(instance.inbox_dir())])
-        watcher.directoryChanged.connect(check_inbox)
-    except OSError:
-        watcher = None
+    # Only the copy holding the lock reads the inbox (a --new-window/--classic extra window doesn't).
+    watcher = None
     poll = QTimer(interval=1500, timeout=check_inbox)  # backstop if a change notification is missed
-    poll.start()
-    check_inbox()  # notes left by copies started while we were starting up
+    if owns_lock:
+        try:
+            watcher = QFileSystemWatcher([str(instance.inbox_dir())])
+            watcher.directoryChanged.connect(check_inbox)
+        except OSError:
+            watcher = None
+        poll.start()
+        check_inbox()  # notes left by copies started while we were starting up
 
     from .ui import theme as th
     from .ui.widgets import app_icon_pixmap
@@ -275,7 +285,8 @@ def main(argv: list[str] | None = None) -> int:
             win.receive_paths([Path(p) for p in pending])
     code = app.exec()
     poll.stop()
-    lock.unlock()
+    if owns_lock:
+        lock.unlock()
     return code
 
 

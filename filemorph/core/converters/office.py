@@ -109,6 +109,17 @@ def _com(fam: str, fn, ctx: Ctx):
     """Run fn(app) against a private, hidden Office instance with a cancel/timeout watchdog.
     Office can't be interrupted politely mid-call, so the watchdog kills *our* instance's process
     (identified by the PIDs that appeared when we started it — never the user's own Office windows)."""
+    # One conversion per Office app at a time: the "new process" detection below must not mix up
+    # two of our own instances (a cancel would then kill the wrong one).
+    with _COM_LOCKS[fam]:
+        return _com_locked(fam, fn, ctx)
+
+
+_COM_LOCKS = {fam: threading.Lock() for fam in ("Word", "Excel", "PowerPoint")}
+
+
+def _com_locked(fam: str, fn, ctx: Ctx):
+    ctx.check_cancel()
     import pythoncom
     import win32com.client
     pythoncom.CoInitialize()
@@ -141,7 +152,9 @@ def _com(fam: str, fn, ctx: Ctx):
             try:
                 # PowerPoint is single-instance: DispatchEx may hand us the user's own open
                 # PowerPoint. Never quit that one while it has their presentations open.
-                users_app = fam == "PowerPoint" and not ours and app.Presentations.Count > 0
+                # PowerPoint is single-instance: DispatchEx may hand us (or later share with) the
+                # user's own PowerPoint. Never quit it while any presentation is still open.
+                users_app = fam == "PowerPoint" and app.Presentations.Count > 0
                 if not users_app:
                     app.Quit()
             except Exception:
@@ -169,6 +182,11 @@ def _word(src: Path, dst: Path, fmt: str, ctx: Ctx):
         app.DisplayAlerts = 0
         try:
             app.AutomationSecurity = 3  # msoAutomationSecurityForceDisable: never run macros
+        except Exception:
+            pass
+        try:  # don't refresh links/linked pictures a document points at (web, network shares)
+            app.Options.UpdateLinksAtOpen = False
+            app.Options.UpdateLinksAtPrint = False
         except Exception:
             pass
         doc = app.Documents.Open(str(src.resolve()), ConfirmConversions=False, ReadOnly=True,
@@ -210,10 +228,11 @@ def _excel(src: Path, dst: Path, fmt: str, ctx: Ctx):
 
 def _powerpoint(src: Path, dst: Path, fmt: str, ctx: Ctx):
     def go(app):
-        try:
-            app.AutomationSecurity = 3
-        except Exception:
-            pass
+        for attr, val in (("AutomationSecurity", 3), ("DisplayAlerts", 1)):  # 1 = ppAlertsNone
+            try:
+                setattr(app, attr, val)
+            except Exception:
+                pass
         # "file::password" makes PowerPoint fail instead of prompting for a password
         pres = app.Presentations.Open(f"{src.resolve()}::{_NO_PASSWORD}", ReadOnly=True, Untitled=False,
                                       WithWindow=False)
@@ -287,10 +306,57 @@ class _ProfileLock:
         self.fh = None
 
 
+# LibreOffice settings FileMorph needs in its private profile:
+#  - never fetch images/links a document points at (web trackers, \\server\share NTLM leaks,
+#    or a private file:///C:/... picture copied into the output)
+#  - never run macros
+_LO_SETTINGS = [
+    ("/org.openoffice.Office.Common/Security/Scripting", "BlockUntrustedRefererLinks", "true"),
+    ("/org.openoffice.Office.Common/Security/Scripting", "MacroSecurityLevel", "3"),
+    ("/org.openoffice.Office.Common/Security/Scripting", "DisableMacrosExecution", "true"),
+    ("/org.openoffice.Office.Common/Misc", "UseOpenCL", "false"),
+    ("/org.openoffice.Office.Writer/Content/Update", "Link", "1"),  # 1 = never update links
+    ("/org.openoffice.Office.Calc/Content/Update", "Link", "1"),
+]
+
+
 def _lo_profile() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".cache") / "FileMorph" / "lo-profile"
     base.mkdir(parents=True, exist_ok=True)
+    _lo_harden(base)
     return base
+
+
+def _lo_harden(profile: Path) -> None:
+    """Make sure the profile's registrymodifications.xcu carries _LO_SETTINGS (added or replaced)."""
+    import re as _re
+    xcu = profile / "user" / "registrymodifications.xcu"
+    try:
+        text = xcu.read_text(encoding="utf-8") if xcu.exists() else ""
+    except OSError:
+        return
+    if "<oor:items" not in text:
+        text = ('<?xml version="1.0" encoding="UTF-8"?>\n<oor:items xmlns:oor="http://openoffice.org/2001/registry" '
+                'xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+                '</oor:items>\n')
+    changed = False
+    for path, name, value in _LO_SETTINGS:
+        item = (f'<item oor:path="{path}"><prop oor:name="{name}" oor:op="fuse"><value>{value}</value>'
+                f'</prop></item>')
+        pat = _re.compile(r'<item oor:path="' + _re.escape(path) + r'"><prop oor:name="' + _re.escape(name)
+                          + r'"[^>]*>.*?</item>', _re.S)
+        if item in text:
+            continue
+        text, n = pat.subn(lambda _m: item, text)
+        if not n:
+            text = text.replace("</oor:items>", item + "\n</oor:items>")
+        changed = True
+    if changed:
+        try:
+            xcu.parent.mkdir(parents=True, exist_ok=True)
+            xcu.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _libreoffice(src: Path, dst: Path, fmt: str, ctx: Ctx):
@@ -311,8 +377,8 @@ def _libreoffice(src: Path, dst: Path, fmt: str, ctx: Ctx):
             for attempt in range(2):
                 try:
                     proc.run(args, ctx, timeout=600, err_msg="LibreOffice couldn't convert this file.")
-                except ConversionError:
-                    if attempt:
+                except ConversionError as e:
+                    if attempt or "too long" in str(e):  # a timeout won't go better the second time
                         raise
                 if list(outdir.glob(f"input.{fmt}")):
                     break
@@ -349,6 +415,15 @@ def office_convert(src: Path, dst: Path, ctx: Ctx):
         raise ConversionError("The Office conversion produced no output.")
 
 
+def _all_shapes(shapes):
+    """Shapes in reading order, including the ones inside groups."""
+    for sh in shapes:
+        if getattr(sh, "shape_type", None) == 6 and hasattr(sh, "shapes"):  # MSO_SHAPE_TYPE.GROUP
+            yield from _all_shapes(sh.shapes)
+        else:
+            yield sh
+
+
 def pptx_to_txt(src: Path, dst: Path, ctx: Ctx):
     from pptx import Presentation
     try:
@@ -358,7 +433,7 @@ def pptx_to_txt(src: Path, dst: Path, ctx: Ctx):
     out = []
     for i, slide in enumerate(prs.slides, 1):
         lines = [f"--- Slide {i} ---"]
-        for shape in slide.shapes:
+        for shape in _all_shapes(slide.shapes):
             if shape.has_text_frame:
                 lines += [p.text for p in shape.text_frame.paragraphs if p.text.strip()]
             if getattr(shape, "has_table", False) and shape.has_table:

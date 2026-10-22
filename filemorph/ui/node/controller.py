@@ -182,8 +182,21 @@ class MorphController(QObject):
         return m
 
     def _tray_activated(self, reason):
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+        # Windows sends Trigger and then DoubleClick for a double-click: toggling on both would
+        # hide and re-show (or the reverse). Single click toggles; a double-click always shows.
+        if reason == QSystemTrayIcon.Trigger:
             self._toggle_node(not self.node.isVisible() and not self.panel.isVisible())
+        elif reason == QSystemTrayIcon.DoubleClick:
+            self._toggle_node(True)
+
+    def _show_node(self):
+        """Make sure the orb is on screen (it may have been hidden from the tray)."""
+        if self.panel.isVisible():
+            self.panel.hide()
+        if not self.node.isVisible():
+            self.node.show()
+        self.node.raise_()
+        self.act_show.setChecked(True)
 
     def _toggle_node(self, show: bool):
         self.act_show.setChecked(show)
@@ -230,7 +243,8 @@ class MorphController(QObject):
 
     # ------------------------------------------------------------- panel
     def expand(self):
-        if self.worker:
+        if self.worker:  # converting: the orb is the progress display; just bring it forward
+            self._show_node()
             return
         self.panel.show_home()
         self.panel.set_recent(self.history)
@@ -339,10 +353,9 @@ class MorphController(QObject):
             seen.add(key)
             (files if detect(p) else unknown).append(p)
         self.files = files[:MAX_FILES]
-        if self.panel.isVisible():
-            self.panel.hide()
-            self.node.show()
+        self._show_node()
         self.idle_timer.stop()
+        self._done_has_errors = False
         if not self.files:
             name = unknown[0].name if unknown else "That item"
             self._fail(f"{name} isn't a file type FileMorph can convert.", name)
@@ -449,7 +462,7 @@ class MorphController(QObject):
         for spec in self._options_for(dst):
             kind, key = spec[0], spec[1]
             if kind == "slider":
-                opts[key] = int(self.settings.value("quality", 90))
+                opts[key] = self._int_setting("quality", 90, 1, 100)
             elif kind == "seg":
                 default = spec[4]
                 v = self.settings.value(f"opt_{key}", default)
@@ -464,9 +477,7 @@ class MorphController(QObject):
         if not self.files or self.worker:
             return
         self.target = dst
-        if self.panel.isVisible():
-            self.panel.hide()
-            self.node.show()
+        self._show_node()
         self._combine = combine
         self.results = [(f, [], "") for f in (self.files[:1] if combine else self.files)]
         self.node.show_converting(self._conv_text(0))
@@ -479,6 +490,7 @@ class MorphController(QObject):
         self.worker.finished.connect(self._on_finished)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
     def _conv_text(self, i: int) -> str:
@@ -487,14 +499,20 @@ class MorphController(QObject):
         return f"Converting to {t}…" if n == 1 else f"Converting {i + 1} of {n} to {t}…"
 
     def _on_progress(self, i: int, frac: float, msg: str):
+        if self.worker is None or self.sender() is not self.worker:  # a cancelled run's queued signals
+            return
         n = len(self.results)
         self.node.set_progress((i + frac) / n, self._conv_text(min(i, n - 1)))
 
     def _on_file_done(self, i: int, outs: list, err: str):
+        if self.worker is None or self.sender() is not self.worker:
+            return
         if i < len(self.results):
             self.results[i] = (self.results[i][0], outs, err)
 
     def _on_finished(self, cancelled: bool):
+        if self.worker is None or self.sender() is not self.worker:
+            return
         self.worker = None
         self.thread = None
         if cancelled:
@@ -523,6 +541,7 @@ class MorphController(QObject):
         self.panel.set_recent(self.history)
         self.last_outputs = [o for r in ok for o in r[1]]
         if ok and not bad:
+            self._done_has_errors = False
             n = len(self.last_outputs)
             name = Path(self.last_outputs[0]).name if n == 1 else f"{n} {to} files"
             out_parent = Path(self.last_outputs[0]).parent
@@ -545,6 +564,7 @@ class MorphController(QObject):
             self.history = self.history[:20]
             self._save_history()
             self.panel.set_recent(self.history)
+        self._show_node()
         self.node.show_error(msg)
         self.idle_timer.start(6000)
 
@@ -557,9 +577,16 @@ class MorphController(QObject):
         mode = self.node.mode
         if mode == "done" and self.last_outputs and not getattr(self, "_done_has_errors", False):
             self.idle_timer.stop()
-            out = Path(self.last_outputs[0])
-            reveal_path(out) if len(self.last_outputs) > 1 else open_path(out)
             self.node.show_idle()
+            out = Path(self.last_outputs[0])
+            try:
+                reveal_path(out) if len(self.last_outputs) > 1 else open_path(out)
+            except OSError:
+                # no app is set up to open this type (e.g. .avif, .webm): show it in its folder
+                try:
+                    reveal_path(out)
+                except OSError:
+                    pass
         elif mode in ("done", "error"):
             self.idle_timer.stop()
             self._done_has_errors = False
@@ -602,8 +629,19 @@ class MorphController(QObject):
     def _update_blocked(self) -> str:
         return "Finish the current conversion first." if self.worker else ""
 
+    def _updates_page_open(self) -> bool:
+        upd = getattr(self.panel, "updates", None)
+        return self.panel.isVisible() and upd is not None and self.panel.stack.currentWidget() is upd
+
     def _update_checked(self, offer, err: str):
         cur = self.updater.current_version()
+        if not self._updates_page_open():
+            # The user moved on (or closed the panel) while we checked: don't yank them back.
+            if offer is not None:
+                self.offer = offer
+                self.tray.showMessage("FileMorph", f"Version {offer.version} is available. "
+                                      "Open ⋯ → Check for updates to install it.", QSystemTrayIcon.Information, 6000)
+            return
         if err:
             self.panel.show_updates("error", current=cur, title="Couldn't check for updates", message=err)
         elif offer is None:
@@ -663,11 +701,31 @@ class MorphController(QObject):
 
     # ------------------------------------------------------------- history
     def _load_history(self) -> list[dict]:
+        """Recent conversions, keeping only well-formed entries (a damaged setting must never stop
+        the panel from opening)."""
         try:
             data = json.loads(self.settings.value("history", "[]"))
-            return [d for d in data if isinstance(d, dict)][:20]
         except (ValueError, TypeError):
             return []
+        out = []
+        for d in data if isinstance(data, list) else []:
+            if not isinstance(d, dict) or not isinstance(d.get("name"), str):
+                continue
+            e = {"name": d["name"]}
+            for k in ("from", "to", "to_key", "out", "error"):
+                if isinstance(d.get(k), str):
+                    e[k] = d[k]
+            e.setdefault("from", "?")
+            e.setdefault("to", "—")
+            e["at"] = float(d["at"]) if isinstance(d.get("at"), (int, float)) else 0.0
+            out.append(e)
+        return out[:20]
+
+    def _int_setting(self, key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(hi, int(self.settings.value(key, default))))
+        except (TypeError, ValueError):
+            return default
 
     def _save_history(self):
         self.settings.setValue("history", json.dumps(self.history[:20]))

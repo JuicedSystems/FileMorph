@@ -677,7 +677,10 @@ class PanelWindow(QWidget):
                 s = QSlider(Qt.Horizontal)
                 s.setRange(50, 100)
                 s.setFixedWidth(150)
-                s.setValue(int(self._settings.value("quality", 90)))
+                try:
+                    s.setValue(max(1, min(100, int(self._settings.value("quality", 90)))))
+                except (TypeError, ValueError):
+                    s.setValue(90)
                 s.setStyleSheet("QSlider::groove:horizontal{height:4px;background:rgba(255,255,255,40);border-radius:2px}"
                                 f"QSlider::sub-page:horizontal{{background:{st.SWITCH_ON};border-radius:2px}}"
                                 "QSlider::handle:horizontal{background:#fff;width:16px;height:16px;margin:-6px 0;border-radius:8px}")
@@ -886,6 +889,12 @@ class PanelWindow(QWidget):
     def hideEvent(self, e):  # noqa: N802
         self.timer.stop()
         super().hideEvent(e)
+
+    def showEvent(self, e):  # noqa: N802
+        # also covers re-showing after setWindowFlags (Keep on top), which hides the window
+        self._last = mo.now()
+        self.timer.start()
+        super().showEvent(e)
 
     def paintEvent(self, _):  # noqa: N802
         p = QPainter(self)

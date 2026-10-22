@@ -56,20 +56,38 @@ function Image(el)
   end
 end
 
-local function scrub_raw(el)
-  if el.format:match("html") then
-    for attr in el.text:gmatch("[%w-]+%s*=%s*[\"']([^\"']*)[\"']") do
-      if unsafe(attr) and not attr:lower():match("^https?:") then return {} end
-    end
-    local t = el.text:gsub("(<%s*[iI][mM][gG][^>]-[sS][rR][cC]%s*=%s*[\"'])https?://[^\"']*", "%1")
-    t = t:gsub("<%s*[lL][iI][nN][kK][^>]*>", "")
-    t = t:gsub("<%s*[sS][cC][rR][iI][pP][tT][^>]*>.-<%s*/%s*[sS][cC][rR][iI][pP][tT]%s*>", "")
-    el.text = t
+-- Raw HTML can't be checked reliably (unquoted, entity-encoded, iframe/object/style/url()...),
+-- so it is dropped. The text around it is kept; tags like <b> just lose their effect.
+local function drop_raw(el)
+  if el.format:match("html") or el.format:match("epub") or el.format:match("xml") then
+    return {}
+  end
+end
+RawInline = drop_raw
+RawBlock = drop_raw
+
+-- Inline styles can point at files too (background:url(...)).
+local function clean_attrs(el)
+  local st = el.attributes and el.attributes["style"]
+  if st and st:lower():match("url%s*%(") then
+    el.attributes["style"] = nil
     return el
   end
 end
-RawInline = scrub_raw
-RawBlock = scrub_raw
+Div = clean_attrs
+Span = clean_attrs
+Table = clean_attrs
+Header = clean_attrs
+
+-- Metadata in a document's front matter can tell pandoc to read files (cover image, CSS,
+-- header includes...). Our own settings come from the command line, not from these.
+local RISKY_META = {"cover-image", "epub-cover-image", "css", "stylesheet", "header-includes",
+                    "include-before", "include-after", "epub-embedded-fonts", "bibliography",
+                    "csl", "reference-doc", "template", "logo", "favicon"}
+function Meta(m)
+  for _, k in ipairs(RISKY_META) do m[k] = nil end
+  return m
+end
 """
 
 
@@ -102,7 +120,9 @@ def doc_to_doc(src: Path, dst: Path, ctx: Ctx):
     media = None
     cwd = None
     if d == "md" and s in ("docx", "odt", "epub"):
-        media = dst.parent / f"{dst.stem}_media"
+        # link-safe folder name: pandoc writes it into the Markdown as-is (spaces, &, # would break links)
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", dst.stem).strip("._") or "document"
+        media = dst.parent / f"{safe}_media"
         extra.append(f"--extract-media={media.name}")  # relative, so links survive moving
         cwd = dst.parent
     if s == "html":
@@ -123,12 +143,25 @@ def txt_to_html(src: Path, dst: Path, ctx: Ctx):
 
 def read_text(path: Path) -> str:
     raw = path.read_bytes()
-    for enc in ("utf-8-sig", "utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else ("utf-8-sig", "cp1252", "latin-1"):
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
         try:
-            return raw.decode(enc)
+            return raw.decode("utf-16")
         except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="replace")
+            pass
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    # Mostly UTF-8 with a few stray bytes? Then keep UTF-8 (reading it as cp1252 would garble every
+    # accent). Decide by counting valid multi-byte UTF-8 sequences against invalid bytes.
+    valid = len(re.findall(rb"[\xc2-\xdf][\x80-\xbf]|[\xe0-\xef][\x80-\xbf]{2}|[\xf0-\xf4][\x80-\xbf]{3}", raw))
+    text = raw.decode("utf-8", errors="replace")
+    if valid and valid >= 4 * text.count("\ufffd"):
+        return text
+    try:
+        return raw.decode("cp1252")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
 
 
 # ---------------------------------------------------------------- HTML -> PDF
@@ -201,8 +234,8 @@ def render_html_pdf(html: str, dst: Path, ctx: Ctx, base_dir: Path | None = None
             more, _ = story.place(where)
             story.draw(dev)
             writer.end_page()
-            if n > 5000:
-                break
+            if n > 20000:
+                raise ConversionError("This document is too long to lay out as a PDF (over 20,000 pages).")
     finally:
         writer.close()  # release the file handle even when cancelled
 

@@ -124,7 +124,19 @@ def raster_to_raster(src: Path, dst: Path, ctx: Ctx):
         frames[0].save(dst, _PIL_NAME[target], save_all=True, append_images=frames[1:],
                        duration=durations, loop=im.info.get("loop", 0), disposal=2, **kw)
         return
-    _prep(im, target).save(dst, _PIL_NAME[target], **kw)
+    out = _prep(im, target)
+    if "icc_profile" in kw and not _icc_matches(kw["icc_profile"], out.mode):
+        del kw["icc_profile"]  # e.g. a greyscale profile on pixels that became RGB
+    out.save(dst, _PIL_NAME[target], **kw)
+
+
+def _icc_matches(profile: bytes, mode: str) -> bool:
+    space = bytes(profile[16:20]) if profile and len(profile) >= 20 else b""
+    if space == b"GRAY":
+        return mode in ("L", "LA")
+    if space == b"RGB ":
+        return mode in ("RGB", "RGBA", "P")
+    return False
 
 
 def raster_to_svg(src: Path, dst: Path, ctx: Ctx):
@@ -144,19 +156,26 @@ def svg_to_png(src: Path, dst: Path, ctx: Ctx):
         doc = pymupdf.open(src)
     except Exception as e:
         raise ConversionError("This SVG couldn't be read — it may use features that aren't supported.") from e
-    page = doc[0]
-    w, h = page.rect.width or 512, page.rect.height or 512
-    target_px = int(ctx.opt("svg_px", 2048))
-    zoom = max(1.0, target_px / max(w, h))
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=True)
-    pix.save(dst)
+    with doc:
+        page = doc[0]
+        w, h = page.rect.width or 512, page.rect.height or 512
+        # Icons are scaled up to a useful size; huge drawings are scaled down so the bitmap stays
+        # sane (a 20000 px SVG would need gigabytes).
+        target_px = int(ctx.opt("svg_px", 2048))
+        side = max(w, h)
+        zoom = target_px / side if side < target_px else (8192 / side if side > 8192 else 1.0)
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=True)
+        pix.save(dst)
 
 
 def svg_to_pdf(src: Path, dst: Path, ctx: Ctx):
     import pymupdf
-    doc = pymupdf.open(src)
-    pdf = pymupdf.open("pdf", doc.convert_to_pdf())
-    pdf.save(dst, garbage=3, deflate=True)
+    try:
+        doc = pymupdf.open(src)
+    except Exception as e:
+        raise ConversionError("This SVG couldn't be read — it may use features that aren't supported.") from e
+    with doc, pymupdf.open("pdf", doc.convert_to_pdf()) as pdf:
+        pdf.save(dst, garbage=3, deflate=True)
 
 
 def image_to_pdf(src: Path, dst: Path, ctx: Ctx):
@@ -196,6 +215,6 @@ def register(reg: Registry) -> None:
                 reg.add(s, d, raster_to_raster, cost=1.0 if d != "jpg" else 1.1, label="Converting image")
     reg.add([f for f in RASTER_IN if f != "gif"], "svg", raster_to_svg, cost=1.5, label="Tracing to vector")
     reg.add("gif", "svg", raster_to_svg, cost=1.5, label="Tracing to vector")
-    reg.add("svg", "png", svg_to_png, label="Rendering SVG")
+    reg.add("svg", "png", svg_to_png, cost=0.5, label="Rendering SVG")
     reg.add("svg", "pdf", svg_to_pdf, label="Converting SVG")
     reg.add(RASTER_IN, "pdf", image_to_pdf, cost=1.0, label="Building PDF")

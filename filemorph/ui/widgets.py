@@ -71,32 +71,9 @@ def icon(name: str, color: QColor, size: int = 18, width: float = 1.8) -> QIcon:
 
 
 def app_icon_pixmap(size: int = 256, on_dark: bool = False) -> QPixmap:
-    """The FileMorph mark: two overlapping rounded tiles with a turn arrow."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    s = size / 64
-    p.scale(s, s)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#34343C" if on_dark else "#1B1B1F"))
-    p.drawRoundedRect(QRectF(4, 4, 56, 56), 15, 15)
-    p.setBrush(QColor("#FF7A45"))
-    p.drawRoundedRect(QRectF(15, 14, 20, 26), 4, 4)
-    p.setBrush(QColor("#5B8CFF"))
-    p.drawRoundedRect(QRectF(29, 24, 20, 26), 4, 4)
-    pen = QPen(QColor("#FFFFFF"), 3.2)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-    p.setBrush(Qt.NoBrush)
-    path = QPainterPath()
-    path.moveTo(21, 44)
-    path.cubicTo(21, 52, 33, 54, 39, 53)
-    path.moveTo(35.5, 49.5); path.lineTo(39.5, 53); path.lineTo(35.5, 56.5)
-    p.drawPath(path)
-    p.end()
-    return pm
+    """The FileMorph mark (the orb); see ui/brand_icon.py."""
+    from .brand_icon import render
+    return QPixmap.fromImage(render(size))
 
 
 # ----------------------------------------------------------- flow layout

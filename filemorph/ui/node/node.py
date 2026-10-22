@@ -13,6 +13,7 @@ Fully transparent pixels are click-through on Windows, so only the orb catches t
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -277,7 +278,35 @@ class NodeWindow(QWidget):
         self.timer.stop()  # no frames at all while the node is hidden (panel open / tray only)
         super().hideEvent(e)
 
+    def _update_passthrough(self):
+        """Windows: the translucent glow would otherwise swallow clicks meant for the desktop or the
+        app underneath. Only the orb and its caption take the mouse; elsewhere the window is
+        click-through (WS_EX_TRANSPARENT), switched as the cursor moves."""
+        if sys.platform != "win32" or not self.isVisible():
+            return
+        from PySide6.QtGui import QCursor
+        pos = QPointF(self.mapFromGlobal(QCursor.pos()))
+        want = self._press is not None or self._hit(pos) or self.mode == "hover"
+        if want == getattr(self, "_input_on", None):
+            return
+        self._input_on = want
+        if not want and self.mouse_inside:  # a click-through window gets no leave event
+            self.mouse_inside = False
+            if self.mode == "picking":
+                self._set_hover(-1)
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            GWL_EXSTYLE, WS_EX_TRANSPARENT = -20, 0x20
+            u32 = ctypes.windll.user32
+            ex = u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ex = (ex & ~WS_EX_TRANSPARENT) if want else (ex | WS_EX_TRANSPARENT)
+            u32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex)
+        except Exception:
+            pass
+
     def _frame(self):
+        self._update_passthrough()
         t = mo.now()
         dt = min(0.1, t - self.last_t)
         self.last_t = t
@@ -573,6 +602,7 @@ class NodeWindow(QWidget):
         return None, None
 
     def _paint_caption(self, p: QPainter):
+        self._cap_rect = None
         parts, born = self._caption_parts()
         if not parts:
             return
@@ -597,6 +627,7 @@ class NodeWindow(QWidget):
         k = born.value() if born else 1
         raw = born.raw() if born else 1
         p.save()
+        self._cap_rect = QRectF(CX - w / 2, CAP_TOP, w, h)  # for clicks on the caption pill
         p.translate(CX, CAP_TOP + h / 2)
         p.translate(0, -8 * (1 - k))
         sc = 0.88 + 0.12 * k
@@ -654,16 +685,30 @@ class NodeWindow(QWidget):
         p.restore()
 
     # ------------------------------------------------------------- input
+    def _hit(self, pos: QPointF) -> bool:
+        """The orb itself or its caption pill; the glow around them is decoration, not a target."""
+        cap = getattr(self, "_cap_rect", None)
+        return self._in_shape(pos) or (cap is not None and cap.contains(pos))
+
     def mousePressEvent(self, e):  # noqa: N802
+        if not self._hit(e.position()):
+            e.ignore()
+            return
         if e.button() == Qt.RightButton:
             self.menu_requested.emit(e.globalPosition().toPoint())
             return
-        if e.button() != Qt.LeftButton or not self._in_shape(e.position()):
+        if e.button() != Qt.LeftButton:
             e.ignore()
             return
         self._press = e.globalPosition().toPoint()
         self._press_win = self.pos()
+        self._press_mode = self.mode
         self._dragging = False
+
+    def mouseDoubleClickEvent(self, e):  # noqa: N802
+        # Qt would turn the second click of a double-click into another press. A double-click on a
+        # chip must not convert and then cancel; on the done orb it must not open the file twice.
+        e.accept()
 
     def mouseMoveEvent(self, e):  # noqa: N802
         pos = e.position()
@@ -692,6 +737,8 @@ class NodeWindow(QWidget):
         if dragged:
             self.moved.emit(self.center_global())
             return
+        if self.mode != getattr(self, "_press_mode", self.mode):
+            return  # the state changed under the press (e.g. a conversion finished): ignore this click
         if self.mode == "picking":
             i = self._chip_at(e.position())
             if i >= 0:

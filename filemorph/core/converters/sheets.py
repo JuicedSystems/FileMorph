@@ -32,10 +32,9 @@ def read_sheets(src: Path, fmt: str) -> dict:
                 except csv.Error:
                     delim = ","
             import io
-            sheets = {src.stem[:31] or "Sheet1": pd.read_csv(io.StringIO(text), sep=delim, dtype=str,
-                                                             keep_default_na=False, engine="python")}
-            # ';'-separated files come from locales that write decimals as 1,5
-            sheets = {k: _infer_numbers(v, decimal_comma=delim == ";") for k, v in sheets.items()}
+            sheets = {src.stem[:31] or "Sheet1": _read_delimited(text, delim)}
+            # ';'-separated files often come from locales that write decimals as 1,5 (decided per column)
+            sheets = {k: _infer_numbers(v, semicolon=delim == ";") for k, v in sheets.items()}
         elif fmt == "json":
             data = json.loads(read_text(src))
             sheets = _json_to_frames(data, src.stem)
@@ -49,6 +48,28 @@ def read_sheets(src: Path, fmt: str) -> dict:
     if not sheets:
         raise ConversionError("The file is empty.")
     return sheets
+
+
+def _read_delimited(text: str, delim: str):
+    """CSV/TSV -> DataFrame of strings. Rows may be ragged: short rows are padded, and extra fields
+    get their own "Column N" instead of being dropped or shifting the columns."""
+    import io
+    import pandas as pd
+    rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in r)]
+    if not rows:
+        return pd.DataFrame()
+    width = max(len(r) for r in rows)
+    header = [h if h.strip() else f"Column {i + 1}" for i, h in enumerate(rows[0])]
+    header += [f"Column {i + 1}" for i in range(len(header), width)]
+    seen: dict[str, int] = {}
+    for i, h in enumerate(header):  # duplicate names would collide in the output
+        if h in seen:
+            seen[h] += 1
+            header[i] = f"{h} ({seen[h]})"
+        else:
+            seen[h] = 0
+    body = [r + [""] * (width - len(r)) for r in rows[1:]]
+    return pd.DataFrame(body, columns=header, dtype=str)
 
 
 def _promote_header(df):
@@ -69,7 +90,10 @@ def _promote_header(df):
     return out
 
 
-_PLAIN = re.compile(r"^-?\d+(\.\d+)?([eE][-+]?\d+)?$")
+_PLAIN = re.compile(r"^-?\d+(\.\d+)?$")
+# scientific notation only in the forms spreadsheets write (1.5E+10, 2E-05): "1E10"/"2E5" stay text,
+# they're far more often product or part codes
+_SCI = re.compile(r"^-?\d+(\.\d+[eE][-+]?\d+|[eE][-+]\d+)$")
 _THOUSANDS = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
 _EU_PLAIN = re.compile(r"^-?\d+(,\d+)?$")
 _EU_THOUSANDS = re.compile(r"^-?\d{1,3}(\.\d{3})+(,\d+)?$")
@@ -83,20 +107,20 @@ def _normalise_number(v: str, decimal_comma: bool) -> str | None:
         if _EU_PLAIN.match(v) or _EU_THOUSANDS.match(v):
             return v.replace(".", "").replace(",", ".")
         return None
-    if _PLAIN.match(v):
+    if _PLAIN.match(v) or _SCI.match(v):
         return v
     if _THOUSANDS.match(v):
         return v.replace(",", "")
     return None
 
 
-def _infer_numbers(df, decimal_comma: bool = False):
+def _infer_numbers(df, decimal_comma: bool = False, semicolon: bool = False):
     """Turn a text column into numbers only when that loses nothing: every value must be an
     unambiguous number, and columns with leading zeros (ZIP codes, IDs) or more digits than a
     double can hold stay text."""
     import pandas as pd
     for c in df.columns:
-        col = df[c].astype(str)
+        col = df[c].fillna("").astype(str)  # short rows give NaN (pandas 3 keeps it through astype)
         vals = [v.strip() for v in col if v.strip() != ""]
         if not vals:
             continue
@@ -104,12 +128,16 @@ def _infer_numbers(df, decimal_comma: bool = False):
             continue
         if any(sum(ch.isdigit() for ch in v.lstrip("-0")) > 15 for v in vals):
             continue
-        norm = [_normalise_number(v, decimal_comma) for v in vals]
+        # In ';' files a column is "decimal comma" only if it actually has 1,5-style values;
+        # otherwise 1.250 is one-point-two-five, not twelve hundred and fifty.
+        dc = decimal_comma or (semicolon and any(re.search(r"\d,\d", v) for v in vals))
+        norm = [_normalise_number(v, dc) for v in vals]
         if any(n is None for n in norm):
             continue
-        numeric = pd.to_numeric(col.map(lambda v: _normalise_number(v, decimal_comma) if v.strip() else None),
+        numeric = pd.to_numeric(col.map(lambda v: _normalise_number(v, dc) if v.strip() else None),
                                 errors="coerce")
-        if all(("." not in n and "e" not in n.lower()) for n in norm):
+        if all(("." not in n and "e" not in n.lower()) for n in norm) and \
+                all(abs(int(n)) < 2 ** 63 for n in norm):
             numeric = numeric.astype("Int64")  # keep 7 as 7, not 7.0
         df[c] = numeric
     return df
@@ -153,10 +181,23 @@ def _unique_sheet_names(names) -> list[str]:
     return out
 
 
+def _file_safe(name: str) -> str:
+    """Sheet names may contain characters Windows forbids in file names (Excel allows "<>|)."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).rstrip(" .")
+    return name or "Sheet"
+
+
 def _multi_paths(dst: Path, names: list[str]) -> list[Path]:
     if len(names) == 1:
         return [dst]
-    return [dst.with_name(f"{dst.stem} - {n}{dst.suffix}") for n in _unique_sheet_names(names)]
+    out, seen = [], set()
+    for n in _unique_sheet_names(names):
+        cand, i = _file_safe(n), 2
+        while cand.lower() in seen:
+            cand, i = f"{_file_safe(n)} ({i})", i + 1
+        seen.add(cand.lower())
+        out.append(dst.with_name(f"{dst.stem} - {cand}{dst.suffix}"))
+    return out
 
 
 def _tidy_dates(df):
