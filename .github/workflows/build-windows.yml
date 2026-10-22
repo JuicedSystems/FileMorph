@@ -1,0 +1,123 @@
+name: Release FileMorph
+
+# Push a tag like v0.3.0 (matching filemorph/__init__.py and a CHANGELOG.md section).
+# CI tests, builds, packages with Velopack and publishes a GitHub Release containing:
+#   FileMorph-win-Setup.exe        <- give this to new users
+#   *.nupkg + releases.win.json    <- what installed copies download when users click "Update"
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Releases must live in a PUBLIC repo so installed copies can read them without a token.
+  # If this code repo is private, create a public "FileMorph-releases" repo, set the repository
+  # variable RELEASE_REPO=<owner>/FileMorph-releases and a secret RELEASE_TOKEN (PAT with repo scope),
+  # and point UPDATE_URL in filemorph/__init__.py at it.
+  RELEASE_REPO: ${{ vars.RELEASE_REPO || github.repository }}
+  RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Read version and check it matches the tag / update URL
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import filemorph; print(filemorph.__version__)"
+          $url = python -c "import filemorph; print(filemorph.UPDATE_URL)"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$v") {
+            throw "Tag ${{ github.ref_name }} doesn't match filemorph/__init__.py version $v" }
+          if ($url.TrimEnd('/') -ne "https://github.com/$env:RELEASE_REPO") {
+            throw "UPDATE_URL ($url) must be https://github.com/$env:RELEASE_REPO or installed copies won't find updates" }
+          python packaging/release_notes.py $v -o notes.md
+          if ($LASTEXITCODE -ne 0) { throw "Missing CHANGELOG entry for $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true   # fail on any failing line, not just the last
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          python packaging/make_version_info.py
+
+      - name: Conversion test matrix
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ErrorActionPreference = "Stop"
+          python tests/make_samples.py tests/_samples
+          python tests/run_matrix.py tests/_samples tests/_out --jobs 2
+
+      - name: Build app (PyInstaller, one-folder)
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ErrorActionPreference = "Stop"
+          python packaging/make_icon.py
+          pyinstaller packaging/filemorph.spec --noconfirm --clean
+
+      - name: Self-test the frozen app
+        shell: pwsh
+        run: |
+          $report = Join-Path $PWD "selftest.json"
+          $p = Start-Process (Join-Path $PWD "dist\FileMorph\FileMorph.exe") -ArgumentList "--selftest","`"$report`"" -WorkingDirectory $PWD -PassThru
+          $null = $p.Handle; $p.WaitForExit()
+          if (-not (Test-Path $report)) {
+            Get-Content (Join-Path $env:LOCALAPPDATA "FileMorph\logs\crash.log") -ErrorAction SilentlyContinue
+            throw "Frozen app wrote no self-test report" }
+          python packaging/check_selftest.py $report
+          if ($LASTEXITCODE -ne 0) { throw "Frozen self-test failed" }
+
+      - name: Install vpk (same version as the app's velopack library)
+        shell: pwsh
+        run: |
+          $vp = python -c "import importlib.metadata as m; print(m.version('velopack'))"
+          dotnet tool install -g vpk --version $vp
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "vpk $vp not on NuGet; installing latest vpk"
+            dotnet tool install -g vpk
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't install vpk" } }
+          Join-Path $env:USERPROFILE ".dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Package with Velopack (full + delta update, Setup.exe)
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          # previous release, so vpk can build a small delta update
+          vpk download github --repoUrl "https://github.com/$env:RELEASE_REPO" --token "$env:RELEASE_TOKEN"
+          # Code signing (recommended before public release) — add e.g.:
+          #   --azureTrustedSignFile trusted-signing.json   or   --signParams "/td sha256 /fd sha256 /f cert.pfx /p ..."
+          vpk pack --packId FileMorph --packVersion $v --packDir dist\FileMorph --mainExe FileMorph.exe `
+                   --packTitle FileMorph --icon assets\icon.ico --releaseNotes notes.md
+          if ($LASTEXITCODE -ne 0) { throw "vpk pack failed" }
+
+      - name: Publish GitHub Release (installers + update feed)
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          vpk upload github --repoUrl "https://github.com/$env:RELEASE_REPO" --token "$env:RELEASE_TOKEN" `
+                            --publish --releaseName "FileMorph $v" --tag "v$v"
+          if ($LASTEXITCODE -ne 0) { throw "vpk upload failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileMorph-${{ steps.ver.outputs.version }}
+          path: Releases/*

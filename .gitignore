@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+Releases/
+*.spec.bak
+
+# Generated during builds/tests
+selftest.json
+notes.md
+tests/_samples/
+tests/_out*/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

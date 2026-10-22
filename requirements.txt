@@ -1,0 +1,25 @@
+# Upper bounds = the newest major/minor series FileMorph has been tested with.
+# UI
+PySide6-Essentials>=6.7,<7
+# Documents & PDF
+PyMuPDF>=1.24,<2.1
+pdf2docx>=0.5.8,<0.6
+pdfplumber>=0.11,<0.12
+python-docx>=1.1,<2
+python-pptx>=1.0,<2
+pypandoc_binary>=1.13,<2      # bundles pandoc
+# Spreadsheets
+pandas>=2.2,<4
+openpyxl>=3.1,<4
+xlrd>=2.0,<3                  # read .xls
+odfpy>=1.4,<2                 # read/write .ods
+# Images
+Pillow>=11.0,<13
+pillow-heif>=0.18,<2          # HEIC / iPhone photos
+vtracer>=0.6,<0.7               # bitmap -> true vector SVG
+# Audio / video
+imageio-ffmpeg>=0.5,<0.7        # bundles ffmpeg
+# User-initiated updates (keep in step with the vpk version used in CI)
+velopack==1.2.161
+# Windows: drive Microsoft Office for .doc/.xls/.ppt when installed
+pywin32>=306; sys_platform == "win32"

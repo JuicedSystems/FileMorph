@@ -1,0 +1,146 @@
+"""User-initiated updates via Velopack.
+
+Nothing here runs on its own: the app only checks when the user asks, and only
+installs after the user clicks "Update". Releases are published by CI with
+`vpk pack` + `vpk upload github` (see .github/workflows/build-windows.yml).
+
+Flow: check() -> UpdateOffer (version, notes, size) -> download(offer, progress)
+      -> apply_and_restart(offer)  (Velopack swaps the app folder and relaunches)
+"""
+from __future__ import annotations
+
+import re
+
+import os
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from .. import UPDATE_URL, __version__
+
+
+class UpdateError(Exception):
+    """Message is safe to show to the user."""
+
+
+@dataclass
+class UpdateOffer:
+    version: str
+    notes_markdown: str
+    size_bytes: int
+    is_delta: bool
+    raw: Any = None  # velopack.UpdateInfo
+
+
+class Updater:
+    """Thin wrapper around velopack.UpdateManager with friendly errors."""
+
+    def __init__(self, source: str | None = None):
+        self.source = source or os.environ.get("FILEMORPH_UPDATE_URL") or UPDATE_URL
+        self._mgr = None
+        self._why_unavailable: str | None = None
+        try:
+            import velopack
+            self._mgr = velopack.UpdateManager(self.source)
+        except ImportError:
+            self._why_unavailable = "The update component is missing from this build."
+        except Exception as e:  # not installed via Velopack (running from source / portable copy)
+            msg = str(e).lower()
+            if "not properly installed" in msg or "does not exist" in msg:
+                self._why_unavailable = ("Updates are available in the installed app. "
+                                         "This copy is running from source.")
+            else:
+                self._why_unavailable = f"Updates aren't available: {str(e).splitlines()[0]}"
+
+    @property
+    def available(self) -> bool:
+        return self._mgr is not None
+
+    @property
+    def why_unavailable(self) -> str | None:
+        return self._why_unavailable
+
+    def current_version(self) -> str:
+        if self._mgr is not None:
+            try:
+                return self._mgr.get_current_version()
+            except Exception:
+                pass
+        return __version__
+
+    def pending_restart(self) -> str | None:
+        """A version already downloaded earlier and waiting for a restart, if any."""
+        if self._mgr is None:
+            return None
+        try:
+            asset = self._mgr.get_update_pending_restart()
+            return asset.Version if asset else None
+        except Exception:
+            return None
+
+    def check(self) -> UpdateOffer | None:
+        if self._mgr is None:
+            raise UpdateError(self._why_unavailable or "Updates aren't available.")
+        try:
+            info = self._mgr.check_for_updates()
+        except Exception as e:
+            raise UpdateError(_friendly(e, "check for updates")) from e
+        if info is None:
+            return None
+        target = info.TargetFullRelease
+        deltas = list(info.DeltasToTarget or [])
+        size = sum(d.Size for d in deltas) if deltas else target.Size
+        return UpdateOffer(target.Version, target.NotesMarkdown or "", int(size or 0), bool(deltas), info)
+
+    def download(self, offer: UpdateOffer, progress: Callable[[int], None] | None = None) -> None:
+        if self._mgr is None:
+            raise UpdateError(self._why_unavailable or "Updates aren't available.")
+        try:
+            if progress is not None:
+                self._mgr.download_updates(offer.raw, progress)
+            else:
+                self._mgr.download_updates(offer.raw)
+        except Exception as e:
+            raise UpdateError(_friendly(e, "download the update")) from e
+
+    def apply_pending(self) -> None:
+        """Install a version that was downloaded earlier ("Restart to update")."""
+        if self._mgr is None:
+            raise UpdateError(self._why_unavailable or "Updates aren't available.")
+        asset = self._mgr.get_update_pending_restart()
+        if asset is None:
+            raise UpdateError("The downloaded update is no longer there. Check for updates again.")
+        try:
+            self._mgr.apply_updates_and_restart(asset)
+        except Exception as e:
+            raise UpdateError(_friendly(e, "install the update")) from e
+
+    def apply_and_restart(self, offer: UpdateOffer) -> None:
+        """Exits this process; Velopack installs the new version and relaunches it."""
+        if self._mgr is None:
+            raise UpdateError(self._why_unavailable or "Updates aren't available.")
+        try:
+            self._mgr.apply_updates_and_restart(offer.raw)
+        except Exception as e:
+            raise UpdateError(_friendly(e, "install the update")) from e
+
+
+def _friendly(e: Exception, action: str) -> str:
+    text = str(e).splitlines()[0] if str(e) else type(e).__name__
+    low = text.lower()
+    if any(k in low for k in ("dns", "resolve", "connect", "timed out", "timeout", "network", "unreachable")):
+        return f"Couldn't {action} — check your internet connection and try again."
+    if "403" in low or "rate limit" in low:
+        return f"Couldn't {action} right now (the update server is busy). Try again in a few minutes."
+    if "404" in low or "not found" in low:
+        return f"Couldn't {action}: no releases were found on the update server."
+    if "checksum" in low or "hash" in low or re.search(r"\bsha-?(1|256|512)?\b", low):
+        return "The update download was damaged. Please try again."
+    return f"Couldn't {action}. ({text})"
+
+
+def human_size(n: int) -> str:
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit in ("bytes", "KB") else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n} B"
