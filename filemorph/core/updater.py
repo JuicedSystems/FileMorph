@@ -9,10 +9,11 @@ Flow: check() -> UpdateOffer (version, notes, size) -> download(offer, progress)
 """
 from __future__ import annotations
 
-import re
-
 import os
+import re
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from .. import UPDATE_URL, __version__
@@ -40,7 +41,7 @@ class Updater:
         self._why_unavailable: str | None = None
         try:
             import velopack
-            self._mgr = velopack.UpdateManager(self.source)
+            self._mgr = velopack.UpdateManager(_make_source(velopack, self.source))
         except ImportError:
             self._why_unavailable = "The update component is missing from this build."
         except Exception as e:  # not installed via Velopack (running from source / portable copy)
@@ -124,17 +125,39 @@ class Updater:
             raise UpdateError(_friendly(e, "install the update")) from e
 
 
+def _make_source(velopack, url: str):
+    """GitHub repos are read through the GitHub releases API; anything else is a plain file host."""
+    if re.match(r"^https?://(www\.)?github\.com/[^/]+/[^/]+/?$", url):
+        return velopack.GithubSource(url.rstrip("/"))
+    return url
+
+
+def _log(action: str, e: Exception) -> None:
+    """Keep the raw error (the on-screen message is simplified) in %LOCALAPPDATA%\\FileMorph\\logs."""
+    try:
+        d = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".cache") / "FileMorph" / "logs"
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "updates.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {action}: {type(e).__name__}: {e}\n")
+    except OSError:
+        pass
+
+
 def _friendly(e: Exception, action: str) -> str:
-    text = str(e).splitlines()[0] if str(e) else type(e).__name__
-    low = text.lower()
-    if any(k in low for k in ("dns", "resolve", "connect", "timed out", "timeout", "network", "unreachable")):
-        return f"Couldn't {action} — check your internet connection and try again."
-    if "403" in low or "rate limit" in low:
-        return f"Couldn't {action} right now (the update server is busy). Try again in a few minutes."
+    _log(action, e)
+    full = str(e) or type(e).__name__
+    text = full.splitlines()[0]
+    low = full.lower()
+    # Most specific first: HTTP errors also mention "network" in their text.
     if "404" in low or "not found" in low:
-        return f"Couldn't {action}: no releases were found on the update server."
+        return (f"Couldn't {action}: no published updates were found. The release page may be "
+                "private or not set up yet.")
+    if "401" in low or "403" in low or "rate limit" in low:
+        return f"Couldn't {action} right now (the update server refused or is busy). Try again later."
     if "checksum" in low or "hash" in low or re.search(r"\bsha-?(1|256|512)?\b", low):
         return "The update download was damaged. Please try again."
+    if any(k in low for k in ("dns", "resolve", "connect", "timed out", "timeout", "network", "unreachable")):
+        return f"Couldn't {action} — check your internet connection and try again."
     return f"Couldn't {action}. ({text})"
 
 
