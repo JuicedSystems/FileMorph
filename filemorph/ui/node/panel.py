@@ -365,7 +365,7 @@ class FormatTile(QAbstractButton):
         p.drawRoundedRect(r, 12, 12)
         p.setFont(st.font(12, 600, mono=True, spacing_em=0.04))
         p.setPen(QColor("#0a0b10") if on else QColor(st.INK))
-        p.drawText(r, Qt.AlignCenter, FORMATS[self.key].ext.upper())
+        p.drawText(r, Qt.AlignCenter, FORMATS[self.key].tag)
         if self.hasFocus():
             p.setPen(QPen(QColor("#ffffff"), 2)); p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 13, 13)
@@ -657,7 +657,7 @@ class PanelWindow(QWidget):
 
     def _tile_selected(self, key: str):
         self.selected = key
-        self.convert_btn.setText(f"Convert to {FORMATS[key].ext.upper()}")
+        self.convert_btn.setText("Trace to SVG" if key == "trace" else f"Convert to {FORMATS[key].tag}")
         _clear(self.opt_l)
         self.opt_widgets = {}
         for spec in self._options_spec(key):

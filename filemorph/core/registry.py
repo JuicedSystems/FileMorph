@@ -85,14 +85,14 @@ _EXTRA_TARGETS = {
 # Targets we never offer for a source family even if reachable.
 _BLOCKED = {
     "sheet": {"epub", "md", "rtf", "odt", "doc", "docx", "txt", "svg"},
-    "document": {"gif", "ico", "bmp", "svg", "avif"},
-    "slides": {"html", "md", "epub", "rtf", "odt", "doc", "docx", "gif", "ico", "bmp", "svg", "avif"},
+    "document": {"gif", "ico", "bmp", "svg", "avif", "trace"},
+    "slides": {"html", "md", "epub", "rtf", "odt", "doc", "docx", "gif", "ico", "bmp", "svg", "avif", "trace"},
 }
-_PDF_OK_IMAGE_TARGETS = {"png", "jpg", "webp", "tiff", "svg"}
+_PDF_OK_IMAGE_TARGETS = {"png", "jpg", "webp", "tiff", "svg", "trace"}
 
 
 def target_allowed(src: str, dst: str) -> bool:
-    if src == dst or FORMATS[dst].input_only:
+    if src == dst or FORMATS[dst].input_only or FORMATS[src].output_only:
         return False
     s_cat = FORMATS[src].category
     d_cat = FORMATS[dst].category

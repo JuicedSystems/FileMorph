@@ -79,6 +79,13 @@ def selftest(report: Path) -> int:
             subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=1",
                             str(wav)], check=True, creationflags=proc.NO_WINDOW)
             convert_file(wav, "mp3", out)
+        def bw_trace():
+            res = convert_file(png, "trace", out / "trace", {"trace_detail": "balanced"})[0]
+            text = res.read_text(encoding="utf-8")
+            if "<path" not in text or 'fill="#ffffff"' in text.lower():
+                raise RuntimeError("B&W trace produced no black paths")
+        step("png->trace", bw_trace)
+
         step("wav->mp3", media)
 
         def updater():

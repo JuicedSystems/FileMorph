@@ -518,7 +518,7 @@ class MainWindow(QWidget):
             self.options_box.hide()
             return
         n = len(self.files)
-        self.convert_btn.setText(f"Convert {'all ' if n > 1 else ''}to {FORMATS[dst].ext.upper()}")
+        self.convert_btn.setText(f"Convert {'all ' if n > 1 else ''}to {FORMATS[dst].tag}")
         src_cats = {detect(f).category for f in self.files}
         src_keys = {detect(f).key for f in self.files}
         plan_fns = {e.fn.__name__ for k in src_keys for e in (self.registry.plan(k, dst) or [])}
@@ -544,6 +544,13 @@ class MainWindow(QWidget):
                                                      [("Simple", "simple"), ("Balanced", "balanced"),
                                                       ("Detailed", "detailed")], "balanced"))
             rows += 1
+        if dst == "trace":
+            self.options_l.addLayout(self._segmented("Detail", "trace_detail",
+                                                     [("Bold", "bold"), ("Balanced", "balanced"), ("Fine", "fine")],
+                                                     "balanced"))
+            self.options_l.addLayout(self._segmented("Darkness", "trace_darkness",
+                                                     [("Lighter", -25), ("Auto", 0), ("Darker", 25)], 0))
+            rows += 2
         if dst == "pdf" and plan_fns & _BUILTIN_PDF_LAYOUT:
             self.options_l.addLayout(self._segmented("Page size", "page_size",
                                                      [("Letter", "letter"), ("A4", "a4")], "letter"))
@@ -690,7 +697,7 @@ class MainWindow(QWidget):
 
     def _on_progress(self, i: int, frac: float, msg: str):
         n = self._job_count
-        dst = FORMATS[self.selected].ext.upper()
+        dst = FORMATS[self.selected].tag
         if self._combine:
             self.prog_file.setText(f"{len(self.files)} files → one PDF")
         else:
@@ -723,7 +730,7 @@ class MainWindow(QWidget):
         ok = [r for r in self.results if r[1]]
         bad = [r for r in self.results if r[2]]
         n_out = sum(len(r[1]) for r in ok)
-        dst = FORMATS[self.selected].ext.upper()
+        dst = FORMATS[self.selected].tag
         if not bad:
             self.done_icon.set("check", "success")
             self.done_title.setText("Done!")

@@ -3,12 +3,12 @@ from __future__ import annotations
 from functools import lru_cache
 
 from ..registry import Registry
-from . import documents, images, media, office, pdf, sheets
+from . import documents, images, media, office, pdf, sheets, trace_bw
 
 
 @lru_cache(maxsize=1)
 def build_registry() -> Registry:
     reg = Registry()
-    for mod in (images, pdf, documents, sheets, media, office):
+    for mod in (images, pdf, documents, sheets, media, office, trace_bw):
         mod.register(reg)
     return reg

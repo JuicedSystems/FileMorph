@@ -381,7 +381,7 @@ class MorphController(QObject):
         # format already fits in the pill.
         more = len(self.targets) > PILL_MAX or any(self._options_for(t) for t in self.targets)
         badge, name = self._summary()
-        self.node.show_picking(badge, name, [(k, FORMATS[k].ext.upper()) for k in pill], more)
+        self.node.show_picking(badge, name, [(k, FORMATS[k].tag) for k in pill], more)
 
     def _ordered_targets(self, primary: str, common: set) -> list[str]:
         sugg = [k for k in SUGGESTED.get(primary, []) if k in common]
@@ -450,6 +450,10 @@ class MorphController(QObject):
         if dst == "svg" and "image" in src_cats and "svg" not in src_keys:
             out.append(("seg", "svg_detail", "Detail", [("Simple", "simple"), ("Balanced", "balanced"),
                                                         ("Fine", "detailed")], "balanced"))
+        if dst == "trace":
+            out.append(("seg", "trace_detail", "Detail", [("Bold", "bold"), ("Balanced", "balanced"),
+                                                          ("Fine", "fine")], "balanced"))
+            out.append(("seg", "trace_darkness", "Darkness", [("Lighter", -25), ("Auto", 0), ("Darker", 25)], 0))
         if dst == "pdf" and fns & _BUILTIN_PDF_LAYOUT:
             out.append(("seg", "page_size", "Page", [("Letter", "letter"), ("A4", "a4")], "letter"))
         if dst == "gif" and "video" in src_cats:
@@ -494,7 +498,7 @@ class MorphController(QObject):
         self.thread.start()
 
     def _conv_text(self, i: int) -> str:
-        t = FORMATS[self.target].ext.upper()
+        t = FORMATS[self.target].tag
         n = len(self.results)
         return f"Converting to {t}…" if n == 1 else f"Converting {i + 1} of {n} to {t}…"
 
@@ -526,7 +530,7 @@ class MorphController(QObject):
         ok = [r for r in self.results if r[1]]
         bad = [r for r in self.results if r[2]]
         now = time.time()
-        to = FORMATS[self.target].ext.upper()
+        to = FORMATS[self.target].tag
         for src, outs, err in self.results:
             fmt = detect(src)
             entry = {"from": fmt.ext.upper() if fmt else "?", "to": to, "to_key": self.target, "at": now}

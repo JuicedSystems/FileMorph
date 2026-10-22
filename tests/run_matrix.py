@@ -26,6 +26,13 @@ def validate(p: Path, fmt: str) -> str | None:
     if p.stat().st_size == 0:
         return "empty file"
     try:
+        if fmt == "trace":
+            import re as _re
+            text = p.read_text(encoding="utf-8")
+            fills = set(_re.findall(r'fill="([^"]+)"', text))
+            if "<path" not in text or fills - {"#000000"}:
+                return f"trace: expected black paths only, got fills {fills}"
+            fmt = "svg"
         if fmt in ("pdf", "svg"):
             import pymupdf
             with pymupdf.open(p) as d:

@@ -3,6 +3,21 @@
 Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
+## 0.3.3
+**New: TRACE.** Drop a logo, sketch, signature, scan, photo or PDF on the orb and pick
+**TRACE** to get a clean black & white vector SVG with the white removed. It's ready for vinyl
+cutters, laser engraving, stencils and print. Under ••• you can choose *Detail* (Bold, Balanced
+or Fine) and *Darkness* (Lighter, Auto or Darker).
+
+Also in this update:
+- New app icon: the FileMorph orb
+- Double-clicking a format no longer cancels the conversion it just started
+- Selecting lots of files in Explorer always opens them as one batch
+- Clicks on the glow around the orb go through to whatever is underneath
+- Long videos are no longer stopped after 30 minutes, and cancelling PDF → Word stops right away
+- PDF tables keep ZIP codes, IDs and decimals exactly as written when exported to Excel
+- An update never interrupts a conversion that's running
+
 ## 0.3.2
 A new look and a big reliability pass.
 

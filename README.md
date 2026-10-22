@@ -16,7 +16,7 @@ slides, images, audio and video — **completely offline**. Your files never lea
 
 ### [⬇&nbsp; Download FileMorph for Windows](https://github.com/JuicedSystems/FileMorph/releases/latest/download/FileMorph-win-Setup.exe)
 
-<sub>Free · 42 formats in, 38 out · No account, no uploads, no ads</sub>
+<sub>Free · 42 formats in, 38 out · TRACE to clean B&W vector · No account, no uploads, no ads</sub>
 
 <br>
 
@@ -99,6 +99,23 @@ saved **next to the original**, never overwriting anything (`Report (1).docx` if
 
 Changed your mind? **Click the orb or press Esc** while it's converting to cancel.
 
+## TRACE: clean black & white vectors
+
+Drop a logo, sketch, signature, scan, photo or PDF and pick **TRACE**. FileMorph turns it into a
+black-and-white **SVG of clean, smooth shapes** and drops the white completely, so the result has
+a transparent background. It's ready for vinyl cutters, laser engraving, stencils, embroidery
+software and print.
+
+<div align="center">
+<img src="docs/media/trace.png" width="760" alt="Before and after: a scanned logo, a signature on lined paper and a white logo on black, each traced into a clean black SVG with the white removed">
+</div>
+
+- **Detail:** *Bold* for chunky, simple shapes · *Balanced* · *Fine* to keep small details
+- **Darkness:** *Lighter* · *Auto* · *Darker*, for when the automatic cut-off takes too much or too little
+- Light-on-dark designs (a white logo on black) are flipped automatically, so the design is what gets traced
+- Every page of a PDF is traced to its own SVG at the page's real size
+- Line art and logos give the cleanest results; photos become a stylised, drawn-looking version
+
 <div align="center">
 <img src="docs/media/panels.png" width="900" alt="The FileMorph panel: recent conversions, all formats with options, and the updates page">
 </div>
@@ -114,7 +131,7 @@ Click the orb to open the panel: your recent conversions (click one to show it i
 | **Documents** | DOCX, DOC\*, ODT, RTF, TXT, MD, HTML, EPUB ↔ each other, → PDF, → images | Built-in PDF engine works **without Office**; uses Word or LibreOffice when installed for exact layout |
 | **Spreadsheets** | XLSX, XLS\*, ODS, CSV, TSV, JSON ↔ each other, → PDF, HTML | Every sheet kept · ZIP codes and IDs stay intact · wide tables print landscape |
 | **Presentations** | PPTX, PPT\*, ODP\* ↔ each other, → PDF\*, → PNG/JPG per slide\*, → TXT | |
-| **Images** | PNG, JPG, WebP, AVIF, GIF, TIFF, BMP, ICO, SVG, HEIC (in) | Photo → **true vector SVG** (3 detail levels) · animated GIF/WebP kept · multi-size ICO |
+| **Images** | PNG, JPG, WebP, AVIF, GIF, TIFF, BMP, ICO, SVG, HEIC (in) | Photo → **true vector SVG** (3 detail levels) · **TRACE** → black & white SVG, white removed · animated GIF/WebP kept · multi-size ICO |
 | **Audio** | MP3, WAV, M4A/AAC, FLAC, OGG, Opus · WMA, AIFF (in) | |
 | **Video** | MP4, MOV, MKV, WebM, AVI · WMV (in) | → GIF (palette-optimised) · → audio track |
 
@@ -143,6 +160,7 @@ conversions that make no sense, so every format you're offered is one that works
 | **Right-click a file** | **Convert with FileMorph** (on Windows 11, under *Show more options*) or **Send to → FileMorph** |
 | **Convert many files** | Drop several files or a whole folder. Only formats every file can become are offered. |
 | **Make one PDF** | Drop a mix of files → ••• → PDF → turn on **Combine into one PDF** |
+| **Trace to black & white** | Drop an image or PDF → **TRACE**. Adjust *Detail* and *Darkness* under ••• |
 | **Cancel** | Click the orb or press **Esc** while it's converting |
 | **Keyboard** | In the format row: **← →** to move, **Enter** to convert, **Esc** to close |
 | **Choose where files go** | Panel → turn off *Save next to original* → pick a folder |
@@ -268,7 +286,7 @@ filemorph/
     proc.py            runs bundled tools: no console windows, cancel, timeouts, cleanup
     updater.py         user-initiated updates (Velopack)
     shell.py           right-click menu, Send to, Open with
-    converters/        images · tracing · pdf · documents · sheets · media · office
+    converters/        images · tracing · trace_bw (TRACE) · pdf · documents · sheets · media · office
   ui/node/             the orb (node.py), panel (panel.py), controller.py, motion.py (springs)
   ui/                  conversion worker, classic window
 packaging/             PyInstaller spec, build.ps1, release-notes / icon / version-info generators

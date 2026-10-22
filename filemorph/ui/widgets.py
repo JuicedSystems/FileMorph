@@ -181,7 +181,7 @@ class FormatBadge(QWidget):
         corner.closeSubpath()
         p.setBrush(QColor(255, 255, 255, 90))
         p.drawPath(corner)
-        label = (self._text or (f.ext if f else "?")).upper()
+        label = (self._text or (f.tag if f else "?")).upper()
         fs = r.width() * (0.26 if len(label) <= 3 else 0.21 if len(label) == 4 else 0.17)
         font = th.ui_font(1, QFont.Weight.Bold)
         font.setPixelSize(max(7, int(fs)))
@@ -248,7 +248,7 @@ class FormatChip(QAbstractButton):
         p.setPen(t.q("text"))
         top = r.top() + (8 if self.large else 6)
         p.drawText(QRectF(r.left() + 24, top, r.width() - 28, 24), Qt.AlignVCenter | Qt.AlignLeft,
-                   self.fmt.ext.upper())
+                   self.fmt.tag)
         # description
         p.setFont(th.ui_font(8.5 if self.large else 8))
         p.setPen(t.q("muted"))

@@ -12,10 +12,18 @@ class Fmt:
     category: str          # document | sheet | slides | image | audio | video
     exts: tuple[str, ...]  # extensions recognised on input (first = output ext)
     input_only: bool = False
+    output_only: bool = False  # a conversion style, not a file type to detect (e.g. "trace" -> .svg)
+    chip: str = ""             # text on format buttons; defaults to the extension
+    name_suffix: str = ""      # added to the output file name ("Logo - trace.svg")
 
     @property
     def ext(self) -> str:
         return self.exts[0]
+
+    @property
+    def tag(self) -> str:
+        """What format buttons, captions and history show (JPG, DOCX, TRACE...)."""
+        return self.chip or self.ext.upper()
 
 
 CATEGORIES: list[tuple[str, str]] = [
@@ -55,6 +63,7 @@ _ALL = [
     Fmt("jpg", "JPEG image", "image", ("jpg", "jpeg", "jfif", "jpe")),
     Fmt("webp", "WebP image", "image", ("webp",)),
     Fmt("svg", "Vector", "image", ("svg",)),
+    Fmt("trace", "B&W vector trace", "image", ("svg",), output_only=True, chip="TRACE", name_suffix=" - trace"),
     Fmt("gif", "GIF", "image", ("gif",)),
     Fmt("heic", "iPhone photo", "image", ("heic", "heif"), input_only=True),
     Fmt("avif", "AVIF image", "image", ("avif",)),
@@ -80,7 +89,7 @@ _ALL = [
 ]
 
 FORMATS: dict[str, Fmt] = {f.key: f for f in _ALL}
-_BY_EXT: dict[str, Fmt] = {e: f for f in _ALL for e in f.exts}
+_BY_EXT: dict[str, Fmt] = {e: f for f in _ALL if not f.output_only for e in f.exts}
 
 # Formats surfaced first for a given source, in order.
 SUGGESTED: dict[str, list[str]] = {
@@ -102,15 +111,15 @@ SUGGESTED: dict[str, list[str]] = {
     "pptx": ["pdf", "jpg", "png"],
     "ppt": ["pptx", "pdf"],
     "odp": ["pptx", "pdf"],
-    "png": ["jpg", "pdf", "svg", "webp", "ico"],
-    "jpg": ["png", "pdf", "webp", "svg"],
-    "webp": ["png", "jpg", "gif"],
-    "svg": ["png", "pdf", "jpg"],
+    "png": ["jpg", "pdf", "svg", "trace", "webp", "ico"],
+    "jpg": ["png", "pdf", "svg", "trace", "webp"],
+    "webp": ["png", "jpg", "gif", "trace"],
+    "svg": ["png", "pdf", "jpg", "trace"],
     "gif": ["mp4", "png", "webp"],
-    "heic": ["jpg", "png", "pdf"],
+    "heic": ["jpg", "png", "pdf", "trace"],
     "avif": ["jpg", "png"],
-    "tiff": ["jpg", "png", "pdf"],
-    "bmp": ["png", "jpg"],
+    "tiff": ["jpg", "png", "pdf", "trace"],
+    "bmp": ["png", "jpg", "trace"],
     "ico": ["png"],
     "mp3": ["wav", "m4a"],
     "wav": ["mp3", "flac"],

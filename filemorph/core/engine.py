@@ -53,7 +53,7 @@ def _execute(src: Path, src_fmt: str, dst_fmt: str, final_dir: Path, options: di
         final = i == n - 1
         step_dir = final_dir if final else tmp / f"step{i}"
         step_dir.mkdir(parents=True, exist_ok=True)
-        dst = step_dir / f"{src.stem}.{FORMATS[edge.dst].ext}"
+        dst = step_dir / f"{src.stem}{FORMATS[edge.dst].name_suffix if final else ''}.{FORMATS[edge.dst].ext}"
 
         def hop_progress(frac: float, msg: str, _i=i, _label=edge.label):
             if progress:

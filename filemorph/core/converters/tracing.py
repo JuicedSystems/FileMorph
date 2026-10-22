@@ -21,6 +21,12 @@ PRESETS = {
     "balanced": dict(filter_speckle=4, color_precision=6, layer_difference=16, corner_threshold=60),
     "detailed": dict(filter_speckle=2, color_precision=8, layer_difference=8, corner_threshold=45),
 }
+# Black & white line tracing (TRACE): shapes only, no colour layers
+BW_PRESETS = {
+    "bw-bold": dict(filter_speckle=12, corner_threshold=75, length_threshold=6.0, splice_threshold=45, path_precision=2),
+    "bw-balanced": dict(filter_speckle=6, corner_threshold=60, length_threshold=4.0, splice_threshold=45, path_precision=2),
+    "bw-fine": dict(filter_speckle=2, corner_threshold=45, length_threshold=3.0, splice_threshold=45, path_precision=3),
+}
 LAST_TRACER = {"name": ""}  # which engine traced the last image (reported by --selftest)
 
 
@@ -36,8 +42,11 @@ def trace_child_main(src: str, dst: str, detail: str) -> int:
     if os.environ.get("FILEMORPH_TRACE_CRASH"):  # test hook: simulate a native crash
         os.abort()
     import vtracer
-    vtracer.convert_image_to_svg_py(src, dst, colormode="color", hierarchical="stacked", mode="spline",
-                                    **PRESETS.get(detail, PRESETS["balanced"]))
+    if detail in BW_PRESETS:
+        vtracer.convert_image_to_svg_py(src, dst, colormode="binary", mode="spline", **BW_PRESETS[detail])
+    else:
+        vtracer.convert_image_to_svg_py(src, dst, colormode="color", hierarchical="stacked", mode="spline",
+                                        **PRESETS.get(detail, PRESETS["balanced"]))
     return 0 if Path(dst).exists() and Path(dst).stat().st_size > 0 else 1
 
 
