@@ -3,6 +3,11 @@
 Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
+## 0.3.4
+**A quieter orb.** The glow around the FileMorph orb is gone: it now sits on your desktop as a
+clean, low-profile button with just a soft shadow. All the motion is still there, from the morph
+into formats to the liquid fill and the check-mark.
+
 ## 0.3.3
 **New: TRACE.** Drop a logo, sketch, signature, scan, photo or PDF on the orb and pick
 **TRACE** to get a clean black & white vector SVG with the white removed. It's ready for vinyl

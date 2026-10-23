@@ -7,6 +7,8 @@ converting  shrinks back to an orb that fills with liquid (moving wave) + percen
 done        check-mark draws itself, shockwave ring, squash-and-stretch, "<file> saved"
 error       shake + red caption (click for details)
 
+Low profile by design: no glow around the orb, just a soft contact shadow, so it sits quietly
+on the desktop; the motion (springs, morphs, liquid, check-mark) carries the feedback.
 Everything is painted with QPainter on a frameless, translucent, always-on-top window.
 Fully transparent pixels are click-through on Windows, so only the orb catches the mouse.
 """
@@ -72,8 +74,6 @@ class NodeWindow(QWidget):
         self.mode = "idle"
         self.wt, self.ht, self.brt = mo.Tween(BASE), mo.Tween(BASE), mo.Tween(BASE / 2)
         self.inset = mo.Tween(2, 0.6)
-        self.glow = mo.Tween(0.2, 0.6, mo.ease_in_out)
-        self.glow_r = mo.Tween(130, 0.6, mo.ease_in_out)  # tighter at rest so desktop icons stay clickable
         self.ind_x = mo.Tween(0, 0.5)
         self.ind_op = mo.Tween(0, 0.25, mo.linear)
         self.fill = mo.Tween(0, 0.15, mo.linear)
@@ -148,9 +148,6 @@ class NodeWindow(QWidget):
         else:
             self.wt.to(BASE), self.ht.to(BASE), self.brt.to(BASE / 2)
             self.inset.to(2)
-        busy = mode in ("hover", "converting")
-        self.glow.to(0.42 if busy else 0.2)
-        self.glow_r.to(205 if busy else 130)
         self.spin_speed.to(300 if mode in ("hover", "converting") else 60)
         if mode != "picking":
             self.hover_idx = -1
@@ -279,7 +276,7 @@ class NodeWindow(QWidget):
         super().hideEvent(e)
 
     def _update_passthrough(self):
-        """Windows: the translucent glow would otherwise swallow clicks meant for the desktop or the
+        """Windows: translucent pixels (the shadow, the shock ring) would otherwise swallow clicks meant for the desktop or the
         app underneath. Only the orb and its caption take the mouse; elsewhere the window is
         click-through (WS_EX_TRANSPARENT), switched as the cursor moves."""
         if sys.platform != "win32" or not self.isVisible():
@@ -312,7 +309,7 @@ class NodeWindow(QWidget):
         self.last_t = t
         self.spin = (self.spin + dt * self.spin_speed.value()) % 360
         if self.mode == "idle" and self.caption is None and not self.mouse_inside \
-                and not any(x.active for x in (self.wt, self.ht, self.brt, self.glow)):
+                and not any(x.active for x in (self.wt, self.ht, self.brt)):
             # idle: ~15 fps is plenty for the slow breath and aura spin, and keeps CPU near zero
             self.timer.setInterval(66)
         else:
@@ -327,7 +324,6 @@ class NodeWindow(QWidget):
         p.fillRect(self.rect(), Qt.transparent)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
-        self._paint_glow(p)
         if self.mode == "done" and self.shock.running:
             self._paint_shock(p)
         p.save()
@@ -356,44 +352,25 @@ class NodeWindow(QWidget):
         self._paint_caption(p)
         p.end()
 
-    def _paint_glow(self, p: QPainter):
-        # canvas: 380px circle of c1, blur(100px), opacity .2 idle / .42 on drop
-        a = self.glow.value()
-        rad = self.glow_r.value()
-        g = QRadialGradient(QPointF(0, 0), rad)
-        c = QColor(self.c1)
-        for pos, k in ((0, 0.95), (0.3, 0.8), (0.55, 0.5), (0.8, 0.16), (1, 0)):
-            c.setAlphaF(a * k)
-            g.setColorAt(pos, QColor(c))
-        # The window is shorter than the big drop glow: squash it vertically so it fades out
-        # inside the window instead of being cut off by a hard edge.
-        ry = min(rad, H - CY - 2, CY - 2)
-        p.save()
-        p.translate(CX, CY)
-        p.scale(1.0, ry / rad if rad > 0 else 1.0)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(g))
-        p.drawEllipse(QPointF(0, 0), rad, rad)
-        p.restore()
-
     def _paint_shock(self, p: QPainter):
         k = self.shock.value()
-        rad = 48 * (1 + 1.8 * k)
-        p.setPen(QPen(QColor(255, 255, 255, int(255 * 0.75 * (1 - k) * 1.2) if k < 1 else 0), 2))
+        rad = 48 * (1 + 1.4 * k)
+        p.setPen(QPen(QColor(255, 255, 255, int(255 * 0.45 * (1 - k)) if k < 1 else 0), 1.5))
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(QPointF(CX, CY), rad, rad)
 
     def _paint_shadow(self, p: QPainter, r: QRectF, rad: float):
-        # box-shadow: 0 30px 60px -18px rgba(0,0,0,.75) — approximated with stacked soft layers
+        # a soft, close contact shadow (≈ 0 4px 12px rgba(0,0,0,.35)): enough to lift the orb off a
+        # busy wallpaper without a halo around it
         p.setPen(Qt.NoPen)
-        layers = 10
+        layers = 6
         for i in range(layers):
             k = (i + 1) / layers
-            grow = -18 + 30 * k
-            rr = r.adjusted(-grow, -grow + 30, grow, grow + 30)
+            grow = -4 + 9 * k
+            rr = r.adjusted(-grow, -grow + 4, grow, grow + 4)
             if rr.width() <= 0 or rr.height() <= 0:
                 continue
-            p.setBrush(QColor(0, 0, 0, int(255 * 0.75 / layers * (1.25 - k))))
+            p.setBrush(QColor(0, 0, 0, int(255 * 0.35 / layers * (1.25 - k))))
             rd = max(0.0, min(rad + grow, rr.width() / 2, rr.height() / 2))
             p.drawRoundedRect(rr, rd, rd)
 
@@ -551,15 +528,11 @@ class NodeWindow(QWidget):
         if not n:
             return
         cw = (r.width() - 12) / n
-        # indicator (white pill with glow) under the hovered chip
+        # indicator (white pill) under the hovered chip
         op = self.ind_op.value()
         if op > 0.01:
             ir = QRectF(r.left() + 6 + self.ind_x.value() * cw / CW, r.top() + 6, cw, r.height() - 12)
             p.setPen(Qt.NoPen)
-            for i in range(6):  # 0 0 24px rgba(255,255,255,.3)
-                g = 2 + i * 3
-                p.setBrush(QColor(255, 255, 255, int(255 * 0.3 * op / 6 * (1 - i / 6))))
-                p.drawRoundedRect(ir.adjusted(-g, -g, g, g), ir.height() / 2 + g, ir.height() / 2 + g)
             c = QColor(st.INDICATOR)
             c.setAlphaF(op)
             p.setBrush(c)
@@ -686,7 +659,7 @@ class NodeWindow(QWidget):
 
     # ------------------------------------------------------------- input
     def _hit(self, pos: QPointF) -> bool:
-        """The orb itself or its caption pill; the glow around them is decoration, not a target."""
+        """The orb itself or its caption pill; the transparent space around them is not a target."""
         cap = getattr(self, "_cap_rect", None)
         return self._in_shape(pos) or (cap is not None and cap.contains(pos))
 
