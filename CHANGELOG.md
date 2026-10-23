@@ -4,9 +4,25 @@ Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
 ## 0.3.4
-**A quieter orb.** The glow around the FileMorph orb is gone: it now sits on your desktop as a
-clean, low-profile button with just a soft shadow. All the motion is still there, from the morph
-into formats to the liquid fill and the check-mark.
+**New: TRACE.** Drop a logo, sketch, signature, scan, photo or PDF on the orb and pick
+**TRACE** to get a clean black & white vector SVG with the white removed. It's ready for vinyl
+cutters, laser engraving, stencils and print. Under ••• you can choose *Detail* (Bold, Balanced
+or Fine) and *Darkness* (Lighter, Auto or Darker).
+
+**A quieter orb.** The glow is gone: the orb now sits on your desktop as a clean, low-profile
+button with just a soft shadow. All the motion is still there, from the morph into formats to
+the liquid fill and the check-mark.
+
+Also in this update:
+- New app icon: the FileMorph orb, on the installer, Start menu and taskbar
+- Double-clicking a format no longer cancels the conversion it just started
+- Selecting lots of files in Explorer always opens them as one batch
+- Long videos are no longer stopped after 30 minutes, and cancelling PDF → Word stops right away
+- PDF tables keep ZIP codes, IDs and decimals exactly as written when exported to Excel
+- CSV files with missing or extra fields convert without losing data
+- Big multi-page PDFs convert to TIFF without running out of memory
+- An update never interrupts a conversion that's running
+- More helpful update messages
 
 ## 0.3.3
 **New: TRACE.** Drop a logo, sketch, signature, scan, photo or PDF on the orb and pick
