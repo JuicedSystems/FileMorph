@@ -9,12 +9,9 @@
 A tiny floating orb for your Windows desktop that converts documents, PDFs, spreadsheets,
 slides, images, audio and video — **completely offline**. Your files never leave your PC.
 
-[![Latest release](https://img.shields.io/github/v/release/JuicedSystems/FileMorph?style=for-the-badge&label=release&color=7c5cff)](https://github.com/JuicedSystems/FileMorph/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/JuicedSystems/FileMorph/total?style=for-the-badge&color=22d3ee)](https://github.com/JuicedSystems/FileMorph/releases)
+[![Latest release](https://img.shields.io/github/v/release/JuicedSystems/FileMorph?style=for-the-badge&label=release&color=7c5cff)](#install)
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-f472b6?style=for-the-badge)](#install)
 [![Release build](https://img.shields.io/github/actions/workflow/status/JuicedSystems/FileMorph/build-windows.yml?style=for-the-badge&label=build)](https://github.com/JuicedSystems/FileMorph/actions/workflows/build-windows.yml)
-
-### [⬇&nbsp; Download FileMorph for Windows](https://github.com/JuicedSystems/FileMorph/releases/latest/download/FileMorph-win-Setup.exe)
 
 <sub>Free · 42 formats in, 38 out · TRACE to clean B&W vector · No account, no uploads, no ads</sub>
 
@@ -22,13 +19,6 @@ slides, images, audio and video — **completely offline**. Your files never lea
 
 <img src="docs/media/hero.gif" width="800" alt="Dropping a HEIC photo on the FileMorph orb, picking JPG and getting the converted file">
 
-<br><br>
-
-<a href="docs/media/FileMorph-how-to.mp4">
-  <img src="docs/media/how-to-poster.jpg" width="640" alt="Watch the 60-second FileMorph how-to video">
-</a>
-
-<sub>60-second walkthrough · install, convert, batch to PDF, right-click, updates</sub>
 
 </div>
 
@@ -135,20 +125,16 @@ Click the orb to open the panel: your recent conversions (click one to show it i
 | **Audio** | MP3, WAV, M4A/AAC, FLAC, OGG, Opus · WMA, AIFF (in) | |
 | **Video** | MP4, MOV, MKV, WebM, AVI · WMV (in) | → GIF (palette-optimised) · → audio track |
 
-<sub>\* Needs Microsoft Office **or** the free [LibreOffice](https://www.libreoffice.org/download/) installed. FileMorph finds either one automatically and tells you when a file needs it.</sub>
+<sub>\* Needs Microsoft Office **or** the free [LibreOffice](https://www.libreoffice.org/) installed. FileMorph finds either one automatically and tells you when a file needs it.</sub>
 
 FileMorph plans multi-step routes on its own (`.doc → PDF → JPG`, `HEIC → SVG`) and hides
 conversions that make no sense, so every format you're offered is one that works.
 
 ## Install
 
-1. **[Download `FileMorph-win-Setup.exe`](https://github.com/JuicedSystems/FileMorph/releases/latest/download/FileMorph-win-Setup.exe)** (about 250 MB — every conversion engine is built in, so nothing else is needed).
+1. Get `FileMorph-win-Setup.exe` from this repository's **Releases** section (about 250 MB — every conversion engine is built in, so nothing else is needed).
 2. Run it. FileMorph installs for your user account in a few seconds — **no admin rights needed** — and the orb appears.
 3. Drop a file on it.
-
-> [!NOTE]
-> FileMorph isn't code-signed yet, so Windows may show **"Windows protected your PC"**.
-> Click **More info → Run anyway**. This goes away once releases are signed.
 
 **Requirements:** Windows 10 or 11, 64-bit. Microsoft Office or LibreOffice only for `.doc`, `.xls`, `.ppt` and `.odp` files.
 **Uninstall:** Settings → Apps → Installed apps → FileMorph → Uninstall. The right-click menu entries are removed too.
@@ -198,7 +184,7 @@ Click the orb after a conversion to open the file, or click it in *Recent* to sh
 <summary><b>It says a file needs Microsoft Office or LibreOffice.</b></summary>
 
 Old binary formats (`.doc`, `.xls`, `.ppt`) and OpenDocument slides (`.odp`) need one of them to
-read. Install the free [LibreOffice](https://www.libreoffice.org/download/), then restart FileMorph
+read. Install the free [LibreOffice](https://www.libreoffice.org/), then restart FileMorph
 (right-click the orb → *Quit FileMorph*, then open it again). Modern formats (`.docx`, `.xlsx`, `.pptx`, PDF) don't need either.
 </details>
 
@@ -256,7 +242,7 @@ python -m filemorph --selftest selftest.json                    # what CI runs a
 
 FileMorph is packaged with PyInstaller and installed/updated with [Velopack](https://docs.velopack.io).
 
-**Local build** (Windows, needs the [.NET 8 SDK](https://dotnet.microsoft.com/download) for Velopack's `vpk`):
+**Local build** (Windows, needs the [.NET 8 SDK](https://dotnet.microsoft.com/) for Velopack's `vpk`):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1           # → Releases\FileMorph-win-Setup.exe
