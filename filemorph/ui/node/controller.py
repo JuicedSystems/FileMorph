@@ -17,6 +17,10 @@ from ...core.converters import build_registry
 from ...core.updater import Updater, UpdateError, human_size
 from ...core.converters.office import NEEDS_OFFICE, backend_name
 from ...core.formats import CATEGORIES, FORMATS, SUGGESTED, detect
+from ...core import recipes as rc
+from ...core import shell
+from ...core.converters.ocr import looks_scanned
+from ...core.converters.shrink import human
 from ..main_window import open_path, reveal_path
 from ...core import proc
 from ..worker import ConvertWorker, downloads_dir, scan_folder
@@ -24,9 +28,11 @@ from . import style as st
 from .node import BASE, NodeWindow
 from .panel import PanelWindow, paint_orb
 from .updates import UpdateRunner
+from .watch import WatchService
 
 MAX_FILES = 500
 PILL_MAX = 5
+RECIPE_CHIPS = 2   # at most this many recipe chips lead the pill
 QUALITY_TARGETS = {"jpg", "webp", "avif", "mp4", "mov", "mkv", "webm"}
 _BUILTIN_PDF_LAYOUT = {"html_to_pdf", "doc_to_pdf", "sheet_to_pdf"}
 MENU_CSS = ("QMenu{background:#12141c;border:1px solid rgba(255,255,255,26);border-radius:12px;padding:6px;color:#eef0f6}"
@@ -55,6 +61,10 @@ class MorphController(QObject):
         self._incoming: list[Path] = []   # Explorer hand-offs, merged over a short window
         self._queued: list[Path] = []     # files that arrived during a conversion
         self._intake_timer = QTimer(self, singleShot=True, interval=350, timeout=self._flush_incoming)
+        self._incoming_recipes: dict[str, list[Path]] = {}   # Explorer: right-click -> recipe
+        self._queued_recipes: list[tuple[str, list[Path]]] = []
+        self.recipes: list[rc.Recipe] = rc.load()
+        self._recipe: rc.Recipe | None = None   # the recipe the current conversion runs
 
         self.node = NodeWindow()
         self.panel = PanelWindow()
@@ -68,7 +78,7 @@ class MorphController(QObject):
         n = self.node
         n.dropped.connect(self.add_files)
         n.clicked.connect(self._node_clicked)
-        n.chip_picked.connect(lambda k: self.convert(k, self._default_options(k), False))
+        n.chip_picked.connect(self._chip_picked)
         n.more_clicked.connect(self._open_formats)
         n.cancel_requested.connect(self._cancel_pick)
         n.stop_requested.connect(self.cancel_conversion)
@@ -80,7 +90,14 @@ class MorphController(QObject):
         pnl.files_dropped.connect(self.add_files)
         pnl.browse_requested.connect(self.browse)
         pnl.recent_clicked.connect(self._recent_clicked)
-        pnl.convert_requested.connect(self.convert)
+        pnl.convert_requested.connect(self._convert_from_panel)
+        pnl.recipes_requested.connect(self.show_recipes)
+        pnl.recipe_saved.connect(self._save_recipe)
+        pnl.recipe_deleted.connect(self._delete_recipe)
+        pnl.recipe_watch.connect(self._set_watching)
+        pnl.recipe_from_formats.connect(self._recipe_from_formats)
+        pnl._editor_ctx = {"targets": self._recipe_targets(), "options_fn": self._recipe_options,
+                           "targets_of": lambda k: set(self.registry.targets(k))}
         pnl.on_top_toggled.connect(self._set_on_top)
         pnl.save_next_toggled.connect(self._set_save_next)
         pnl.change_folder.connect(self._choose_folder)
@@ -95,6 +112,9 @@ class MorphController(QObject):
         pnl.moved.connect(lambda: setattr(self, "_panel_moved", True))
 
         self.idle_timer = QTimer(self, singleShot=True, timeout=self._back_to_idle)
+        self.watch = WatchService(self.registry, lambda: self.recipes, self)
+        self.watch.converted.connect(self._watch_converted)
+        self.watch.burst_done.connect(self._watch_burst)
         self._setup_tray()
         self._place_node()
         self.node.show()
@@ -157,6 +177,10 @@ class MorphController(QObject):
         m.setStyleSheet(MENU_CSS)
         m.addAction("Open FileMorph", self.expand)
         m.addAction("Convert files…", self.browse)
+        m.addAction("Recipes…", self.show_recipes)
+        self.act_pause = QAction("Pause watching folders", m, checkable=True, checked=False)
+        self.act_pause.triggered.connect(self._pause_watching)
+        m.addAction(self.act_pause)
         m.addSeparator()
         self.act_show = QAction("Show floating node", m, checkable=True, checked=True)
         self.act_show.triggered.connect(self._toggle_node)
@@ -218,7 +242,7 @@ class MorphController(QObject):
         for _, w in threads:
             if w is not None:
                 w.cancel()
-        stuck = False
+        stuck = not self.watch.stop()
         if self.update_runner is not None and not self.update_runner.shutdown():
             stuck = True
         proc.kill_all(final=True)  # ffmpeg/pandoc/LibreOffice/Office instances: don't leave them running
@@ -310,14 +334,25 @@ class MorphController(QObject):
             self._sync_save()
 
     # ------------------------------------------------------------- intake
-    def receive_paths(self, paths: list[Path]):
-        """Files handed over by Explorer (context menu, Send to, Open with). Windows starts one
-        FileMorph per selected file, so hand-offs arriving within a moment become one batch."""
-        self._incoming += [Path(p) for p in paths]
+    def receive_paths(self, paths: list[Path], recipe: str | None = None):
+        """Files handed over by Explorer (context menu, Send to, Open with, a recipe). Windows starts
+        one FileMorph per selected file, so hand-offs arriving within a moment become one batch."""
+        if recipe:
+            self._incoming_recipes.setdefault(recipe, []).extend(Path(p) for p in paths)
+        else:
+            self._incoming += [Path(p) for p in paths]
         self._intake_timer.start()
 
     def _flush_incoming(self):
         paths, self._incoming = self._incoming, []
+        jobs, self._incoming_recipes = self._incoming_recipes, {}
+        for rid, rpaths in jobs.items():
+            self.recipes = rc.load()  # Explorer's menu may be newer than what we loaded
+            r = rc.find(self.recipes, rid)
+            if r is None:
+                self._fail("That recipe no longer exists. Open Recipes to see the ones you have.", "Recipe")
+            else:
+                self.run_recipe(r, rpaths)
         if not paths:
             return
         if self.worker:
@@ -327,16 +362,17 @@ class MorphController(QObject):
             paths = self.files + paths  # still choosing: the new files join the current batch
         self.add_files(paths)
 
-    def _queue(self, paths: list[Path]):
-        self._queued += paths
-        n = len(self._queued)
+    def _queue(self, paths: list[Path], recipe: rc.Recipe | None = None):
+        if recipe is not None:
+            self._queued_recipes.append((recipe.id, list(paths)))
+        else:
+            self._queued += paths
+        n = len(self._queued) + sum(len(b[1]) for b in self._queued_recipes)
         self.tray.showMessage("FileMorph", f"{n} file{'s' if n != 1 else ''} will open when this conversion "
                               "finishes.", QSystemTrayIcon.Information, 3000)
 
-    def add_files(self, paths: list[Path]):
-        if self.worker:
-            self._queue([Path(p) for p in paths])
-            return
+    def _expand(self, paths: list[Path]) -> tuple[list[Path], list[Path]]:
+        """Files (folders opened up, duplicates dropped) -> (convertible, unknown)."""
         found: list[Path] = []
         for p in map(Path, paths):
             if p.is_dir():
@@ -352,7 +388,15 @@ class MorphController(QObject):
                 continue
             seen.add(key)
             (files if detect(p) else unknown).append(p)
-        self.files = files[:MAX_FILES]
+        return files[:MAX_FILES], unknown
+
+    def add_files(self, paths: list[Path]):
+        if self.worker:
+            self._queue([Path(p) for p in paths])
+            return
+        files, unknown = self._expand(paths)
+        self.files = files
+        self._recipe = None
         self._show_node()
         self.idle_timer.stop()
         self._done_has_errors = False
@@ -376,12 +420,19 @@ class MorphController(QObject):
             self._fail(msg, self.files[0].name)
             return
         self.targets = self._ordered_targets(primary, common)
-        pill = self.targets[:PILL_MAX]
+        if primary == "pdf" and "ocrpdf" in self.targets and looks_scanned(
+                next(f for f in self.files if detect(f).key == "pdf")):
+            self.targets.remove("ocrpdf")  # a scan: making it searchable is the likely wish
+            self.targets.insert(0, "ocrpdf")
+        fits = [r for r in self.recipes if all(r.accepts(k, self.registry) for k in counts)][:RECIPE_CHIPS]
+        room = PILL_MAX - len(fits)
+        pill = [(f"recipe:{r.id}", r.tag, r.name) for r in fits]
+        pill += [(k, FORMATS[k].tag) for k in self.targets[:room]]
         # ••• also leads to the options (quality, combine into one PDF, ...) even when every
         # format already fits in the pill.
-        more = len(self.targets) > PILL_MAX or any(self._options_for(t) for t in self.targets)
+        more = len(self.targets) > room or any(self._options_for(t) for t in self.targets)
         badge, name = self._summary()
-        self.node.show_picking(badge, name, [(k, FORMATS[k].tag) for k in pill], more)
+        self.node.show_picking(badge, name, pill, more)
 
     def _ordered_targets(self, primary: str, common: set) -> list[str]:
         sugg = [k for k in SUGGESTED.get(primary, []) if k in common]
@@ -429,19 +480,27 @@ class MorphController(QObject):
         self._drain_queue()
 
     def _drain_queue(self, delay: int = 250):
+        if self._queued_recipes and not self._queued:
+            rid, paths = self._queued_recipes.pop(0)
+            r = rc.find(self.recipes, rid)
+            if r is not None:
+                QTimer.singleShot(delay, lambda: self.worker is None and self.run_recipe(r, paths)
+                                  or (self.worker is not None and self._queue(paths, r)))
+            return
         if self._queued:
             paths, self._queued = self._queued, []
             QTimer.singleShot(delay, lambda: self.worker is None and self.add_files(paths)
                               or (self.worker is not None and self._queue(paths)))
 
     # ------------------------------------------------------------- options
-    def _options_for(self, dst: str) -> list:
-        """Option rows the All formats page should show for this target."""
+    def _options_for(self, dst: str, src_keys: set[str] | None = None) -> list:
+        """Option rows the All formats page (or the recipe editor) should show for this target."""
         out = []
-        src_keys = {detect(f).key for f in self.files}
+        batch = src_keys is None
+        src_keys = {detect(f).key for f in self.files} if batch else src_keys
         src_cats = {FORMATS[k].category for k in src_keys}
         fns = {e.fn.__name__ for k in src_keys for e in (self.registry.plan(k, dst) or [])}
-        if len(self.files) > 1 and dst == "pdf":
+        if batch and len(self.files) > 1 and dst == "pdf":
             out.append(("switch", "combine", "Combine into one PDF"))
         if dst in QUALITY_TARGETS:
             out.append(("slider", "quality", "Quality"))
@@ -458,6 +517,9 @@ class MorphController(QObject):
             out.append(("seg", "page_size", "Page", [("Letter", "letter"), ("A4", "a4")], "letter"))
         if dst == "gif" and "video" in src_cats:
             out.append(("seg", "gif_width", "Width", [("S", 360), ("M", 640), ("L", 960)], 640))
+        if dst == "shrink":
+            out.append(("seg", "shrink_strength", "Strength", [("Light", "light"), ("Balanced", "balanced"),
+                                                               ("Strong", "strong")], "balanced"))
         return out
 
     def _default_options(self, dst: str) -> dict:
@@ -477,6 +539,34 @@ class MorphController(QObject):
         return opts
 
     # ------------------------------------------------------------- convert
+    def _chip_picked(self, key: str):
+        if key.startswith("recipe:"):
+            r = rc.find(self.recipes, key[7:])
+            if r is not None:
+                self.run_recipe(r, list(self.files))
+            return
+        self._recipe = None
+        self.convert(key, self._default_options(key), False)
+
+    def _convert_from_panel(self, dst: str, options: dict, combine: bool):
+        self._recipe = None
+        self.convert(dst, options, combine)
+
+    def run_recipe(self, r: rc.Recipe, paths: list[Path]):
+        """Convert with a saved recipe: its format, options, folder and file names."""
+        if self.worker:
+            self._queue(paths, r)
+            return
+        files, _unknown = self._expand(paths)
+        files = [f for f in files if r.accepts(detect(f).key, self.registry)]
+        if not files:
+            what = "this file" if len(paths) == 1 else "these files"
+            self._fail(f"“{r.name}” can't convert {what}.", Path(paths[0]).name if paths else r.name)
+            return
+        self.files = files
+        self._recipe = r
+        self.convert(r.target, dict(r.options), False)
+
     def convert(self, dst: str, options: dict, combine: bool):
         if not self.files or self.worker:
             return
@@ -486,7 +576,9 @@ class MorphController(QObject):
         self.results = [(f, [], "") for f in (self.files[:1] if combine else self.files)]
         self.node.show_converting(self._conv_text(0))
         self.thread = QThread(self)
-        self.worker = ConvertWorker(list(self.files), dst, self._out_dir(), options, combine)
+        r = self._recipe
+        out_dir = (Path(r.save_dir) if r.save_dir else None) if r else self._out_dir()
+        self.worker = ConvertWorker(list(self.files), dst, out_dir, options, combine, r.rename if r else "")
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self._on_progress)
@@ -500,6 +592,9 @@ class MorphController(QObject):
     def _conv_text(self, i: int) -> str:
         t = FORMATS[self.target].tag
         n = len(self.results)
+        verb = {"shrink": "Shrinking", "ocrpdf": "Reading"}.get(self.target)
+        if verb:
+            return f"{verb}…" if n == 1 else f"{verb} {i + 1} of {n}…"
         return f"Converting to {t}…" if n == 1 else f"Converting {i + 1} of {n} to {t}…"
 
     def _on_progress(self, i: int, frac: float, msg: str):
@@ -552,7 +647,12 @@ class MorphController(QObject):
             src_parent = ok[0][0].parent
             # name the folder whenever it isn't next to the original (chosen folder or fallback)
             where = "" if out_parent == src_parent else f" to {out_parent.name or out_parent}"
-            self.node.show_done(name, f"saved{where}")
+            if self.target == "shrink":
+                before = sum(_size(r[0]) for r in ok)
+                after = sum(_size(Path(o)) for o in self.last_outputs)
+                self.node.show_done(name, f"{human(before)} → {human(after)}" + (f" · saved{where}" if where else ""))
+            else:
+                self.node.show_done(name, f"saved{where}")
             self.idle_timer.start(3200)
         elif ok:
             self.node.show_done(f"{len(ok)} of {len(self.results)} converted", "· click for details")
@@ -560,6 +660,7 @@ class MorphController(QObject):
             self.idle_timer.start(6000)
         else:
             self._fail(bad[0][2], bad[0][0].name, record=False)
+        self._recipe = None
 
     def _fail(self, msg: str, name: str, record: bool = True):
         if record:
@@ -569,7 +670,7 @@ class MorphController(QObject):
             self._save_history()
             self.panel.set_recent(self.history)
         self._show_node()
-        self.node.show_error(msg)
+        self.node.show_error(msg, "Already as small as it gets" if msg.startswith("Already as small") else "")
         self.idle_timer.start(6000)
 
     def _back_to_idle(self):
@@ -703,6 +804,96 @@ class MorphController(QObject):
         self.node.update()
         QTimer.singleShot(5000, lambda: self.node.mode == "idle" and setattr(self.node, "caption", None))
 
+    # ------------------------------------------------------------- recipes
+    def _recipe_targets(self) -> list[str]:
+        """Every format a recipe can make (anything some file type converts to)."""
+        keys = set()
+        for k, f in FORMATS.items():
+            if not f.output_only:
+                keys |= set(self.registry.targets(k))
+        return [k for k in FORMATS if k in keys]
+
+    def _recipe_options(self, dst: str) -> list:
+        srcs = {k for k, f in FORMATS.items() if not f.output_only and dst in self.registry.targets(k)}
+        return self._options_for(dst, srcs)
+
+    def show_recipes(self):
+        self.recipes = rc.load() or self.recipes
+        self._open_panel_for(lambda: self.panel.show_recipes(self.recipes))
+
+    def _recipe_from_formats(self, target: str, options: dict):
+        srcs = {detect(f).key for f in self.files}
+        opts = {k: v for k, v in options.items() if k != "combine"}
+        self.panel.show_recipe_editor(None, self.panel._editor_ctx,
+                                      {"target": target, "options": opts, "name": rc.default_name(target, srcs),
+                                       "sources": sorted(srcs)})
+
+    def _store_recipes(self):
+        try:
+            rc.save(self.recipes)
+        except OSError as e:
+            self.tray.showMessage("FileMorph", f"Couldn't save recipes: {e}", QSystemTrayIcon.Warning, 5000)
+        try:
+            shell.install_recipes(self.recipes)  # Explorer's right-click menu (installed copies only)
+        except Exception:
+            pass
+        self.watch.refresh()
+
+    def _start_watch(self, r: rc.Recipe):
+        r.watch_since = time.time()
+        self.watch.ledger.baseline(r)  # what's there now is left alone
+        self.watch.ledger.save()
+
+    def _save_recipe(self, new: rc.Recipe):
+        old = rc.find(self.recipes, new.id)
+        if new.watching and (old is None or not old.watching or old.watch_dir != new.watch_dir):
+            self._start_watch(new)
+        if old is None:
+            self.recipes.append(new)
+        else:
+            self.recipes[self.recipes.index(old)] = new
+        self._store_recipes()
+        self.panel.show_recipes(self.recipes)
+
+    def _delete_recipe(self, rid: str):
+        self.recipes = [r for r in self.recipes if r.id != rid]
+        self.watch.ledger.forget(rid)
+        self.watch.ledger.save()
+        self._store_recipes()
+        self.panel.show_recipes(self.recipes)
+
+    def _set_watching(self, rid: str, on: bool):
+        r = rc.find(self.recipes, rid)
+        if r is None or r.watching == on:
+            return
+        r.watching = on and bool(r.watch_dir)
+        if r.watching:
+            self._start_watch(r)
+        self._store_recipes()
+
+    def _pause_watching(self, paused: bool):
+        self.watch.set_paused(paused)
+
+    def _watch_converted(self, r: rc.Recipe, src: str, outs: list, err: str):
+        fmt = detect(Path(src))
+        entry = {"from": fmt.ext.upper() if fmt else "?", "to": FORMATS[r.target].tag, "to_key": r.target,
+                 "at": time.time()}
+        if err:
+            self.history.insert(0, dict(entry, name=Path(src).name, error=err))
+        for o in outs[:1]:
+            extra = f" (+{len(outs) - 1})" if len(outs) > 1 else ""
+            self.history.insert(0, dict(entry, name=Path(o).name + extra, out=o))
+        self.history = self.history[:20]
+        self._save_history()
+        self.panel.set_recent(self.history)
+
+    def _watch_burst(self, name: str, ok: int, bad: int):
+        msg = f"Converted {ok} file{'s' if ok != 1 else ''} with “{name}”." if ok else ""
+        if bad:
+            msg += f" {bad} file{'s' if bad != 1 else ''} couldn't be converted: see Recent."
+        icon = QSystemTrayIcon.Warning if bad else QSystemTrayIcon.Information
+        self.tray.showMessage("FileMorph", msg.strip(), icon, 5000)
+
     # ------------------------------------------------------------- history
     def _load_history(self) -> list[dict]:
         """Recent conversions, keeping only well-formed entries (a damaged setting must never stop
@@ -735,7 +926,14 @@ class MorphController(QObject):
         self.settings.setValue("history", json.dumps(self.history[:20]))
 
 
+def _size(p: Path) -> int:
+    try:
+        return p.stat().st_size
+    except OSError:
+        return 0
+
+
 def _file_filter() -> str:
-    exts = " ".join(f"*.{e}" for f in FORMATS.values() for e in f.exts)
+    exts = " ".join(f"*.{e}" for f in FORMATS.values() if not f.output_only for e in f.exts)
     return f"All supported files ({exts});;All files (*)"
 

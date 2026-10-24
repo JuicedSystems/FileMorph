@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["FILEMORPH_DATA"] = tempfile.mkdtemp(prefix="fm-screens-data-")  # never the user's recipes
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -157,6 +158,77 @@ def main():
     print("combined:", [Path(o).name for o in c.last_outputs], c.node.mode)
     pump(1.2)
     shot("11_done_combined", [c.node])
+
+    # ---- 0.4: OCR, SHRINK, recipes
+    c.node.show_idle()
+    pump(0.3)
+    c.add_files([samples / "scan.pdf"])
+    pump(1.4)
+    shot("13_pill_scanned_pdf", [c.node])
+    print("scan chips:", [ch.key for ch in c.node.chips])
+    c.node.chip_picked.emit("ocrpdf")
+    t0 = time.time()
+    while c.node.mode == "converting" and time.time() - t0 < 60:
+        pump(0.05)
+    pump(1.2)
+    shot("14_done_ocr", [c.node])
+    print("ocr:", [Path(o).name for o in c.last_outputs], c.node.mode)
+
+    from PIL import Image
+    big = tmp / "Holiday.jpg"
+    Image.effect_noise((3200, 2100), 40).convert("RGB").save(big, quality=97)
+    c.node.show_idle()
+    c.add_files([big])
+    pump(1.2)
+    c.node._set_hover([ch.key for ch in c.node.chips].index("shrink"))
+    pump(0.7)
+    shot("15_pill_shrink", [c.node])
+    c.node.chip_picked.emit("shrink")
+    t0 = time.time()
+    while c.node.mode == "converting" and time.time() - t0 < 60:
+        pump(0.05)
+    pump(1.2)
+    shot("16_done_shrink", [c.node])
+    print("shrink caption:", [t for _, t in c.node.caption.parts])
+
+    # recipes: empty page, editor (from All formats -> Save as recipe), list, recipe chip
+    c.node.show_idle()
+    c.show_recipes()
+    pump(1.0)
+    shot("17_recipes_empty", [c.panel])
+    c.collapse()
+    c.add_files([samples / "sample.heic"])
+    pump(0.8)
+    c.node.more_clicked.emit()
+    pump(1.0)
+    for b in c.panel.tile_group.buttons():
+        if b.key == "jpg":
+            b.setChecked(True)
+    pump(0.3)
+    shot("18_all_formats_save_as", [c.panel])
+    c.panel.recipe_from_formats.emit("jpg", c.panel._gather()[0])
+    pump(0.6)
+    c.panel.ed_rename.setText("{name} {date}")
+    pump(0.3)
+    shot("19_recipe_editor", [c.panel])
+    c.panel._save_recipe()
+    pump(0.8)
+    shot("20_recipes_list", [c.panel])
+    print("recipes:", [(r.name, r.summary()) for r in c.recipes])
+    c.collapse()
+    import shutil
+    heic = Path(shutil.copy(samples / "sample.heic", tmp / "sample.heic"))  # the recipe saves next to it
+    c.add_files([heic])
+    pump(1.2)
+    c.node._set_hover(0)
+    pump(0.7)
+    shot("21_pill_recipe_chip", [c.node])
+    print("recipe chips:", [(ch.key[:7], ch.label, ch.hint) for ch in c.node.chips])
+    c.node.chip_picked.emit(c.node.chips[0].key)
+    t0 = time.time()
+    while c.node.mode == "converting" and time.time() - t0 < 60:
+        pump(0.05)
+    print("recipe run:", [Path(o).name for o in c.last_outputs])
 
     # colorways
     for name in ("Citrus", "Frost"):

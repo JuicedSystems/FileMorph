@@ -22,13 +22,17 @@ def inbox_dir() -> Path:
     return d
 
 
-def post(paths: list[str]) -> Path:
-    """Hand files (or, with an empty list, just "show yourself") to the running FileMorph.
-    Returns the note's path: it disappears once the running copy has picked it up."""
+def post(paths: list[str], recipe: str | None = None) -> Path:
+    """Hand files (or, with an empty list, just "show yourself") to the running FileMorph, to be
+    converted with a saved recipe if one is named. Returns the note's path: it disappears once
+    the running copy has picked it up."""
     d = inbox_dir()
     name = f"{time.time_ns()}-{os.getpid()}"
     tmp = d / f"{name}.tmp"
-    tmp.write_text(json.dumps({"paths": [str(p) for p in paths]}), encoding="utf-8")
+    note_data = {"paths": [str(p) for p in paths]}
+    if recipe:
+        note_data["recipe"] = recipe
+    tmp.write_text(json.dumps(note_data), encoding="utf-8")
     note = d / f"{name}.json"
     os.replace(tmp, note)  # atomic: the reader never sees half a note
     return note
@@ -50,11 +54,12 @@ def wait_taken(note: Path, timeout: float = 20.0) -> bool:
     return False
 
 
-def drain() -> tuple[list[str], bool]:
-    """Read and remove every note. Returns (paths in arrival order, whether any note arrived)."""
+def drain() -> tuple[list[tuple[list[str], str | None]], bool]:
+    """Read and remove every note. Returns ([(paths, recipe id or None)] in arrival order, whether
+    any note arrived). Notes for the same recipe (or none) are merged, keeping the order."""
     d = inbox_dir()
     now = time.time()
-    paths: list[str] = []
+    batches: list[tuple[list[str], str | None]] = []
     seen = False
     try:
         notes = sorted(d.glob("*.json"))
@@ -73,11 +78,17 @@ def drain() -> tuple[list[str], bool]:
         if not isinstance(data, dict):
             continue
         seen = True
-        paths += [p for p in data.get("paths", []) if isinstance(p, str)]
+        rid = data.get("recipe") if isinstance(data.get("recipe"), str) else None
+        paths = [p for p in data.get("paths", []) if isinstance(p, str)]
+        same = next((b for b in batches if b[1] == rid), None)
+        if same is not None:
+            same[0].extend(paths)
+        else:
+            batches.append((paths, rid))
     for f in d.glob("*.tmp"):  # abandoned half-writes
         try:
             if now - f.stat().st_mtime > 60:
                 f.unlink()
         except OSError:
             pass
-    return paths, seen
+    return batches, seen

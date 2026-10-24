@@ -11,15 +11,17 @@ datas, binaries, hiddenimports = [], [], []
 
 
 def _unused(path: str) -> bool:
-    """pymupdf.layout is an optional AI layout module (~50 MB of models, needs onnxruntime) and
-    mupdf-devel holds C headers/libs for building extensions; FileMorph uses neither."""
+    """pymupdf.layout is an optional AI layout module (~50 MB of models) and mupdf-devel holds
+    C headers/libs for building extensions; FileMorph uses neither. (onnxruntime itself is
+    needed: it runs the OCR models.)"""
     p = path.replace("\\", "/")
     return "pymupdf/layout" in p or "pymupdf/mupdf-devel" in p
 
 
 # Packages that ship native binaries or data files (pandoc.exe, ffmpeg.exe, MuPDF, libheif, ...)
 for pkg in ("pypandoc", "imageio_ffmpeg", "pymupdf", "pillow_heif", "vtracer", "pdf2docx",
-            "pdfplumber", "pdfminer", "docx", "pptx", "openpyxl", "odf", "xlrd", "velopack"):
+            "pdfplumber", "pdfminer", "docx", "pptx", "openpyxl", "odf", "xlrd", "velopack",
+            "rapidocr", "onnxruntime", "pyclipper", "shapely", "omegaconf"):  # OCR engine + its models
     d, b, h = collect_all(pkg, filter_submodules=lambda name: not name.startswith("pymupdf.layout"))
     datas += [x for x in d if not _unused(x[0])]
     binaries += [x for x in b if not _unused(x[0])]
@@ -37,7 +39,7 @@ a = Analysis(  # noqa: F821
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["onnxruntime", "pymupdf.layout", "tkinter", "matplotlib", "IPython", "notebook", "pytest", "scipy",
+    excludes=["pymupdf.layout", "onnxruntime.training", "onnxruntime.transformers", "onnxruntime.quantization", "tkinter", "matplotlib", "IPython", "notebook", "pytest", "scipy",
               "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore"],
     noarchive=False,
 )

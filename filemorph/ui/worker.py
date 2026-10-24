@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from ..core.engine import convert_file, fallback_dir, merge_to_pdf
 from ..core.formats import detect
+from ..core.recipes import render_name
 from ..core.registry import Cancelled, ConversionError
 
 
@@ -72,13 +73,15 @@ class ConvertWorker(QObject):
     file_done = Signal(int, list, str)   # file index, output paths, error message ("" = ok)
     finished = Signal(bool)              # True if cancelled
 
-    def __init__(self, files: list[Path], dst_fmt: str, out_dir: Path | None, options: dict, combine: bool):
+    def __init__(self, files: list[Path], dst_fmt: str, out_dir: Path | None, options: dict, combine: bool,
+                 rename: str = ""):
         super().__init__()
         self.files = files
         self.dst = dst_fmt
         self.out_dir = out_dir
         self.options = options
         self.combine = combine
+        self.rename = rename  # a recipe's name pattern ("{name} {date}"), "" = the usual names
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -105,7 +108,7 @@ class ConvertWorker(QObject):
                     try:
                         outs = convert_file(f, self.dst, self._dir_for(f), self.options,
                                             lambda frac, msg, _i=i: self.progress.emit(_i, frac, msg),
-                                            self.cancel_event)
+                                            self.cancel_event, render_name(self.rename, f, i + 1))
                         self.file_done.emit(i, [str(o) for o in outs], "")
                     except ConversionError as e:
                         self.file_done.emit(i, [], str(e))

@@ -33,6 +33,23 @@ def validate(p: Path, fmt: str) -> str | None:
             if "<path" not in text or fills - {"#000000"}:
                 return f"trace: expected black paths only, got fills {fills}"
             fmt = "svg"
+        if fmt == "ocrpdf":
+            import pymupdf
+            with pymupdf.open(p) as d:
+                if not d[0].get_text().strip():
+                    return "searchable PDF has no text layer"
+            return None
+        if fmt == "shrink":
+            fmt = p.suffix[1:].lower()
+            fmt = {"jpeg": "jpg", "tif": "tiff", "m4v": "mp4"}.get(fmt, fmt)
+            orig = SOURCES.get(p.name)
+            if orig and p.stat().st_size >= orig.stat().st_size:
+                return f"not smaller ({p.stat().st_size} >= {orig.stat().st_size})"
+            if fmt in ("pdf",):
+                import pymupdf
+                with pymupdf.open(p) as a, pymupdf.open(orig) as b:
+                    if a.page_count != b.page_count:
+                        return "page count changed"
         if fmt in ("pdf", "svg"):
             import pymupdf
             with pymupdf.open(p) as d:
@@ -83,21 +100,63 @@ def validate(p: Path, fmt: str) -> str | None:
     return None
 
 
+SOURCES: dict[str, Path] = {}  # shrunk output name -> original, for the "is it smaller" check
+SCAN_WORDS = ("INVOICE", "Northwind", "Widget", "Gadget", "149.00")
+
+
 def one(sample: str, dst: str, out_root: str):
     from filemorph.core.engine import convert_file
     from filemorph.core.formats import detect
     src = Path(sample)
-    out = Path(out_root) / f"{src.suffix[1:]}_to_{dst}"
+    prefix = "" if src.stem == "sample" else f"{src.stem}_"  # scan.pdf and sample.pdf: separate folders
+    out = Path(out_root) / f"{prefix}{src.suffix[1:]}_to_{dst}"
     out.mkdir(parents=True, exist_ok=True)
     t = time.time()
     try:
         files = convert_file(src, dst, out, {})
-        errs = [e for f in files if (e := validate(f, dst if f.suffix[1:].lower() in ("md",) or True else dst))]
+        for f in files:
+            SOURCES[f.name] = src
+        errs = [e for f in files if (e := validate(f, dst))]
+        if src.stem == "scan" and dst in ("txt", "docx", "xlsx", "ocrpdf", "html") and not errs:
+            errs = check_scan_words(files[0], dst)
         status = "FAIL" if errs else "ok"
         detail = "; ".join(errs) if errs else f"{len(files)} file(s)"
     except Exception as e:  # noqa: BLE001
-        status, detail = "ERR", f"{type(e).__name__}: {str(e)[:160]}"
+        if (dst in ("txt", "docx", "xlsx", "ocrpdf", "html") and src.stem != "scan"
+                and str(e).startswith("No text found")):
+            status, detail = "ok", "no text in this picture (correct)"  # a photo, not a document
+        elif dst == "ocrpdf" and src.stem != "scan" and "already has selectable text" in str(e):
+            status, detail = "ok", "already searchable (correct)"
+        elif dst == "shrink" and str(e).startswith("Already as small"):
+            status, detail = "ok", "already compact (no file written)"  # the right answer for a lean sample
+            if any(out.iterdir()):
+                status, detail = "FAIL", "said 'already compact' but left a file behind"
+        else:
+            status, detail = "ERR", f"{type(e).__name__}: {str(e)[:160]}"
     return detect(src).key, dst, status, detail, time.time() - t
+
+
+def check_scan_words(f: Path, dst: str) -> list[str]:
+    """OCR quality: the words of the scanned invoice must come back."""
+    if dst in ("txt", "html"):
+        text = f.read_text(encoding="utf-8")
+    elif dst == "docx":
+        import docx
+        d = docx.Document(f)
+        text = " ".join([p.text for p in d.paragraphs] + [c.text for t in d.tables for r in t.rows for c in r.cells])
+    elif dst == "xlsx":
+        import openpyxl
+        wb = openpyxl.load_workbook(f)
+        cells = [c for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value is not None]
+        if not any(c.value == 149 for c in cells):
+            return ["OCR total 149.00 isn't a number cell"]
+        text = " ".join(str(c.value) for c in cells) + " 149.00"
+    else:
+        import pymupdf
+        with pymupdf.open(f) as d:
+            text = d[0].get_text()
+    missing = [w for w in SCAN_WORDS if w not in text]
+    return [f"OCR missed {missing}"] if missing else []
 
 
 def main():

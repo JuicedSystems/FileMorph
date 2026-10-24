@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFileDialog, QFram
 from ...core.formats import CATEGORIES, FORMATS
 from . import motion as mo
 from . import style as st
+from .recipes_page import RecipePagesMixin
 
 PW, PH = 340, 486      # panel box (canvas size)
 M = 34                 # transparent margin for the drop shadow
@@ -42,6 +43,14 @@ def _icon_path(name: str) -> QPainterPath:
     elif name == "alert":
         p.addEllipse(QPointF(12, 12), 9, 9)
         p.moveTo(12, 7.5); p.lineTo(12, 12.8); p.moveTo(12, 16.3); p.lineTo(12, 16.4)
+    elif name == "star":
+        import math as _m
+        pts = [QPointF(12 + (9.5 if i % 2 == 0 else 4.2) * _m.sin(_m.pi * i / 5),
+                       12.8 - (9.5 if i % 2 == 0 else 4.2) * _m.cos(_m.pi * i / 5)) for i in range(10)]
+        p.moveTo(pts[0])
+        for q in pts[1:]:
+            p.lineTo(q)
+        p.closeSubpath()
     elif name == "folder":
         p.moveTo(3.5, 7); p.quadTo(3.5, 5, 5.5, 5); p.lineTo(9.5, 5); p.lineTo(11.5, 7.5); p.lineTo(18.5, 7.5)
         p.quadTo(20.5, 7.5, 20.5, 9.5); p.lineTo(20.5, 17); p.quadTo(20.5, 19, 18.5, 19); p.lineTo(5.5, 19)
@@ -345,7 +354,7 @@ class FormatTile(QAbstractButton):
         self.setFixedSize(66, 40)
         self.setCursor(Qt.PointingHandCursor)
         f = FORMATS[key]
-        self.setToolTip(f"{f.label} (.{f.ext})")
+        self.setToolTip(f"{f.label} (same format)" if f.keep_ext else f"{f.label} (.{f.ext})")
         self.setAccessibleName(f"Convert to {f.label}")
         self._hover = False
 
@@ -434,8 +443,13 @@ def _label(text: str, px: float, color: str, weight: int = 400, spacing=0.0) -> 
 
 
 # ------------------------------------------------------------------ panel window
-class PanelWindow(QWidget):
+class PanelWindow(RecipePagesMixin, QWidget):
     collapse_requested = Signal()
+    recipes_requested = Signal()
+    recipe_saved = Signal(object)                 # Recipe
+    recipe_deleted = Signal(str)                  # recipe id
+    recipe_watch = Signal(str, bool)              # recipe id, watching
+    recipe_from_formats = Signal(str, dict)       # target, options: "Save as recipe" on All formats
     files_dropped = Signal(list)
     browse_requested = Signal()
     recent_clicked = Signal(dict)
@@ -481,7 +495,7 @@ class PanelWindow(QWidget):
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(6)
         self.back_btn = IconButton("back", "Back")
-        self.back_btn.clicked.connect(self.show_home)
+        self.back_btn.clicked.connect(self.go_back)
         self.back_btn.hide()
         h.addWidget(self.back_btn)
         self.mini = MiniOrb(self)
@@ -493,9 +507,12 @@ class PanelWindow(QWidget):
         self.pin_btn.toggled.connect(self.on_top_toggled)
         self.collapse_btn = IconButton("minus", "Collapse to node")
         self.collapse_btn.clicked.connect(self.collapse_requested)
+        self.star_btn = IconButton("star", "Recipes")
+        self.star_btn.clicked.connect(self.recipes_requested)
         self.more_btn = IconButton("more", "More: updates, colorway, quit")
         self.more_btn.clicked.connect(lambda: self.menu_requested.emit(
             self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft())))
+        h.addWidget(self.star_btn)
         h.addWidget(self.more_btn)
         h.addWidget(self.pin_btn)
         h.addWidget(self.collapse_btn)
@@ -647,8 +664,13 @@ class PanelWindow(QWidget):
         self.convert_btn = PrimaryButton("Convert")
         self.convert_btn.clicked.connect(self._convert)
         v.addWidget(self.convert_btn)
+        save_as = self._secondary("Save as recipe…", lambda: self.recipe_from_formats.emit(self.selected,
+                                                                                         self._gather()[0]), link=True)
+        save_as.setFixedHeight(24)
+        v.addWidget(save_as)
         self._options_spec = options_spec
         self._settings = settings
+        self._back_to = None
         self.stack.setCurrentWidget(self.formats)
         self.back_btn.show()
         self.mini.hide()
@@ -657,7 +679,8 @@ class PanelWindow(QWidget):
 
     def _tile_selected(self, key: str):
         self.selected = key
-        self.convert_btn.setText("Trace to SVG" if key == "trace" else f"Convert to {FORMATS[key].tag}")
+        label = {"trace": "Trace to SVG", "shrink": "Shrink", "ocrpdf": "Make searchable PDF"}
+        self.convert_btn.setText(label.get(key) or f"Convert to {FORMATS[key].tag}")
         _clear(self.opt_l)
         self.opt_widgets = {}
         for spec in self._options_spec(key):
@@ -712,6 +735,11 @@ class PanelWindow(QWidget):
             self.opt_l.addWidget(row)
 
     def _convert(self):
+        opts, combine = self._gather()
+        self.convert_requested.emit(self.selected, opts, combine)
+
+    def _gather(self) -> tuple[dict, bool]:
+        """Options as the All formats page shows them, and whether to combine into one PDF."""
         opts, combine = {}, False
         for k, w in self.opt_widgets.items():
             if isinstance(w, QSlider):
@@ -721,7 +749,7 @@ class PanelWindow(QWidget):
                     combine = w.isChecked()
             elif isinstance(w, QButtonGroup) and w.checkedButton():
                 opts[k] = w.checkedButton().value
-        self.convert_requested.emit(self.selected, opts, combine)
+        return opts, combine
 
     # ------------------------------------------------------------- updates page
     def show_updates(self, state: str, **kw):
@@ -824,6 +852,7 @@ class PanelWindow(QWidget):
         return w
 
     def show_home(self):
+        self._back_to = None
         self.stack.setCurrentWidget(self.home)
         self.back_btn.hide()
         self.mini.show()
@@ -948,7 +977,7 @@ class PanelWindow(QWidget):
     def keyPressEvent(self, e):  # noqa: N802
         if e.key() == Qt.Key_Escape:
             if self.stack.currentWidget() is not self.home:
-                self.show_home()
+                self.go_back()
             else:
                 self.collapse_requested.emit()
         elif e.key() in (Qt.Key_Return, Qt.Key_Enter) and self.stack.currentWidget() is self.formats:

@@ -86,6 +86,49 @@ def selftest(report: Path) -> int:
                 raise RuntimeError("B&W trace produced no black paths")
         step("png->trace", bw_trace)
 
+        def scan_pdf():
+            """A picture of a page: OCR (bundled models + onnxruntime) must read it."""
+            import io
+            import pymupdf
+            from PIL import ImageFont
+            page = Image.new("RGB", (1200, 500), "white")
+            try:
+                f = ImageFont.truetype("arial.ttf", 48)
+            except OSError:
+                f = ImageFont.load_default(48)
+            ImageDraw.Draw(page).text((60, 80), "Invoice 4417 for Northwind", fill="black", font=f)
+            ImageDraw.Draw(page).text((60, 220), "Total due 1,250.00", fill="black", font=f)
+            buf = io.BytesIO()
+            page.save(buf, "JPEG", quality=85)
+            doc = pymupdf.open()
+            doc.new_page(width=600, height=250).insert_image(pymupdf.Rect(0, 0, 600, 250), stream=buf.getvalue())
+            doc.save(tmp / "scan.pdf")
+            return tmp / "scan.pdf"
+
+        def ocr_txt():
+            text = convert_file(scan_pdf(), "txt", out / "ocr")[0].read_text(encoding="utf-8")
+            if "Northwind" not in text or "1,250.00" not in text:
+                raise RuntimeError(f"OCR read: {text!r}")
+
+        def ocr_searchable():
+            import pymupdf
+            res = convert_file(tmp / "scan.pdf", "ocrpdf", out / "ocr")[0]
+            with pymupdf.open(res) as d:
+                if "Northwind" not in d[0].get_text():
+                    raise RuntimeError("searchable PDF has no text layer")
+        step("scan->txt", ocr_txt)
+        step("scan->ocrpdf", ocr_searchable)
+
+        def shrink():
+            big = tmp / "big.png"
+            grain = Image.effect_noise((1400, 900), 48).convert("RGB")  # photo-like detail
+            Image.blend(Image.radial_gradient("L").resize((1400, 900)).convert("RGB"), grain, 0.5).save(big)
+            res = convert_file(big, "jpg", out / "shrink", {"quality": 98})[0]
+            small = convert_file(res, "shrink", out / "shrink")[0]
+            if small.suffix != ".jpg" or small.stat().st_size >= res.stat().st_size:
+                raise RuntimeError("SHRINK didn't make the JPG smaller")
+        step("jpg->shrink", shrink)
+
         step("wav->mp3", media)
 
         def updater():
@@ -139,8 +182,16 @@ def run_velopack_hooks() -> None:
         return
     from .core import shell
 
+    def refresh_recipes():
+        try:  # saved recipes keep their right-click entries across reinstalls and updates
+            from .core import recipes
+            shell.install_recipes(recipes.load())
+        except Exception:
+            pass
+
     def after_install(version):
         shell.install()
+        refresh_recipes()
 
     def after_update(version):
         try:  # the portable zip shouldn't add itself to Explorer's menus
@@ -149,6 +200,7 @@ def run_velopack_hooks() -> None:
         except Exception:
             pass
         shell.install()  # refresh paths/icons in case they changed
+        refresh_recipes()
 
     def before_uninstall(version):
         shell.uninstall()
@@ -182,6 +234,11 @@ def main(argv: list[str] | None = None) -> int:
         i = argv.index("--selftest")
         return selftest(Path(argv[i + 1]) if len(argv) > i + 1 else Path("selftest.json"))
     run_velopack_hooks()
+    recipe = None
+    if "--recipe" in argv:  # Explorer: right-click -> FileMorph recipes -> <name>
+        i = argv.index("--recipe")
+        recipe = argv[i + 1] if len(argv) > i + 1 else None
+        argv = argv[:i] + argv[i + 2:]
     files = [str(Path(a).resolve()) for a in argv[1:] if not a.startswith("--")]
 
     if sys.platform == "win32":
@@ -206,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
         try:
-            if instance.wait_taken(instance.post(files)):
+            if instance.wait_taken(instance.post(files, recipe)):
                 return 0
         except OSError:
             pass  # inbox not writable
@@ -230,13 +287,16 @@ def main(argv: list[str] | None = None) -> int:
     from .core.engine import cleanup_stale_temp
     threading.Thread(target=cleanup_stale_temp, daemon=True).start()
 
-    pending: list[str] = list(files)
+    pending: list[tuple[list[str], str | None]] = [(list(files), recipe)] if files else []
     win = None
     classic = "--classic" in argv
 
-    def deliver(paths: list[str]):
+    def deliver(paths: list[str], rid: str | None = None):
         if win is None:
-            pending.extend(paths)
+            pending.append((paths, rid))
+            return
+        if rid and not classic:
+            win.receive_paths([Path(p) for p in paths], rid)
             return
         if classic:
             if paths:
@@ -251,11 +311,13 @@ def main(argv: list[str] | None = None) -> int:
 
     def check_inbox(*_):
         try:
-            paths, seen = instance.drain()
+            batches, seen = instance.drain()
         except OSError:
             return
-        if seen:
-            deliver(paths)
+        if seen and not batches:
+            deliver([])
+        for paths, rid in batches:
+            deliver(paths, rid)
 
     # Only the copy holding the lock reads the inbox (a --new-window/--classic extra window doesn't).
     watcher = None
@@ -281,15 +343,15 @@ def main(argv: list[str] | None = None) -> int:
         win = MainWindow()
         win.show()
         if pending:
-            QTimer.singleShot(0, lambda: win.add_files([Path(p) for p in pending], replace=True))
+            QTimer.singleShot(0, lambda: win.add_files([Path(p) for b in pending for p in b[0]], replace=True))
     else:  # the floating Morph node
         from .ui.node.controller import MorphController
         app.setQuitOnLastWindowClosed(False)  # lives in the tray
         win = MorphController(app)
         if JUST_UPDATED:
             QTimer.singleShot(900, lambda: win.show_updated(JUST_UPDATED[0]))
-        if pending:
-            win.receive_paths([Path(p) for p in pending])
+        for paths, rid in pending:
+            win.receive_paths([Path(p) for p in paths], rid)
     code = app.exec()
     poll.stop()
     if owns_lock:

@@ -84,7 +84,14 @@ def pdf_to_docx(src: Path, dst: Path, ctx: Ctx):
     """pdf2docx is pure Python and can't be interrupted, so it runs in a child process that
     Cancel can stop at once (and a crash in it can't take FileMorph down)."""
     from .. import proc
+    from .ocr import prepare
     open_pdf(src).close()  # friendly errors for encrypted/broken files
+    src = prepare(src, ctx)  # scanned pages -> real text first
+    if ctx.scratch.get("ocr_all"):  # nothing but scans: build Word straight from the OCR layout
+        from .ocr import scan_to_docx
+        ctx.progress(0.8, "Building the Word document")
+        scan_to_docx(dst, ctx)
+        return
     ctx.progress(0.05, "Analyzing layout")
     proc.run(proc.child_cmd() + ["--pdf2docx", str(src), str(dst)], ctx, timeout=3600,
              env=proc.child_env(), err_msg="This PDF couldn't be rebuilt as a Word document.")
@@ -107,6 +114,8 @@ def pdf2docx_child_main(src: str, dst: str) -> int:
 
 
 def pdf_to_txt(src: Path, dst: Path, ctx: Ctx):
+    from .ocr import prepare
+    src = prepare(src, ctx)
     parts = []
     with open_pdf(src) as doc:
         for i, page in enumerate(doc):
@@ -114,11 +123,13 @@ def pdf_to_txt(src: Path, dst: Path, ctx: Ctx):
             parts.append(page.get_text("text", sort=True).rstrip())
     text = "\n\n".join(parts).strip()
     if not text:
-        raise ConversionError("No text found — this PDF looks like a scan. Try converting it to an image instead.")
+        raise ConversionError("No text found in this PDF.")
     dst.write_text(text + "\n", encoding="utf-8")
 
 
 def pdf_to_html(src: Path, dst: Path, ctx: Ctx):
+    from .ocr import prepare
+    src = prepare(src, ctx)
     body = []
     with open_pdf(src) as doc:
         for i, page in enumerate(doc):
@@ -188,18 +199,38 @@ def pdf_to_xlsx(src: Path, dst: Path, ctx: Ctx):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
+    from .ocr import prepare
 
     open_pdf(src).close()
+    src = prepare(src, ctx)
     wb = Workbook()
     wb.remove(wb.active)
     bold = Font(bold=True)
     fill = PatternFill("solid", fgColor="EEF0F4")
     found_any = False
 
+    from .ocr import scan_tables
+    scanned = scan_tables(ctx)  # OCR'd pages: columns come from the OCR layout
+
     with pdfplumber.open(src) as pdf:
         n = len(pdf.pages)
         for pi, page in enumerate(pdf.pages):
             ctx.progress(pi / n, f"Finding tables on page {pi + 1} of {n}")
+            if pi in scanned:
+                grid = [row for row in scanned[pi]]
+                if any(any(c for c in row) for row in grid):
+                    found_any = True
+                    ws = wb.create_sheet(f"Page {pi + 1}")
+                    for ri, row in enumerate(grid):
+                        for ci, text in enumerate(row):
+                            val, numfmt = _clean_cell(text)
+                            cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
+                            if numfmt:
+                                cell.number_format = numfmt
+                    for col in ws.columns:
+                        width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
+                        ws.column_dimensions[get_column_letter(col[0].column)].width = min(60, max(9, width + 2))
+                continue
             tables = page.extract_tables() or []
             if not tables:
                 # try text-alignment detection for borderless tables
@@ -244,7 +275,7 @@ def pdf_to_xlsx(src: Path, dst: Path, ctx: Ctx):
                                 cell.number_format = numfmt
                         r += 1
         if r == 1:
-            raise ConversionError("No tables or text found — this PDF looks like a scan.")
+            raise ConversionError("No tables or text found in this PDF.")
     wb.save(dst)
 
 

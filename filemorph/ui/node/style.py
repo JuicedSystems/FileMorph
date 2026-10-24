@@ -31,7 +31,7 @@ SWITCH_ON = "#4f7cff"
 
 # File-kind colours (canvas KINDS)
 KIND_COLOR = {"image": "#6d28d9", "video": "#be185d", "audio": "#0f766e", "document": "#b45309",
-              "sheet": "#b45309", "slides": "#b45309", "other": "#475569"}
+              "sheet": "#b45309", "slides": "#b45309", "tools": "#0e7490", "other": "#475569"}
 
 
 def kind_color(fmt_key: str | None) -> QColor:

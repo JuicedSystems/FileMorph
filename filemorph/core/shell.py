@@ -4,6 +4,7 @@ Adds (per-user, no admin):
   - right-click "Convert with FileMorph" on files and folders
   - FileMorph in the "Send to" menu
   - FileMorph in "Open with"
+  - "FileMorph recipes ▸ <name>" for the user's saved recipes (rewritten whenever they change)
 Everything is removed again on uninstall.
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 
 _KEYS = [r"Software\Classes\*\shell\FileMorph", r"Software\Classes\Directory\shell\FileMorph",
          r"Software\Classes\Applications\FileMorph.exe"]
+_RECIPE_KEYS = [r"Software\Classes\*\shell\FileMorphRecipes", r"Software\Classes\Directory\shell\FileMorphRecipes"]
 
 
 def _sendto_link() -> Path:
@@ -39,7 +41,7 @@ def install(exe: str | None = None) -> None:
     # SupportedTypes is what makes Windows offer FileMorph under "Open with" for these files
     try:
         from .formats import FORMATS
-        exts = sorted({e.lower() for f in FORMATS.values() for e in f.exts})
+        exts = sorted({e.lower() for f in FORMATS.values() if not f.output_only for e in f.exts})
     except Exception:
         exts = []
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _KEYS[2] + r"\SupportedTypes") as k:
@@ -61,11 +63,42 @@ def install(exe: str | None = None) -> None:
     _notify_shell()
 
 
+def installed_exe() -> str | None:
+    """The FileMorph.exe Explorer runs, or None when running from source (nothing to register)."""
+    return sys.executable if getattr(sys, "frozen", False) else None
+
+
+def install_recipes(recipes, exe: str | None = None) -> None:
+    """Right-click -> FileMorph recipes -> one entry per recipe (a per-user cascading menu)."""
+    if sys.platform != "win32":
+        return
+    import winreg
+    exe = exe or installed_exe()
+    if not exe:
+        return
+    for base in _RECIPE_KEYS:
+        _delete_tree(winreg, winreg.HKEY_CURRENT_USER, base)
+        if not recipes:
+            continue
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base) as k:
+            winreg.SetValueEx(k, "MUIVerb", 0, winreg.REG_SZ, "FileMorph recipes")
+            winreg.SetValueEx(k, "SubCommands", 0, winreg.REG_SZ, "")
+            winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, f'"{exe}",0')
+        for i, r in enumerate(recipes):
+            sub = base + rf"\shell\r{i:02d}"
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, sub) as k:
+                winreg.SetValueEx(k, "MUIVerb", 0, winreg.REG_SZ, r.name.replace("&", "&&"))
+                winreg.SetValueEx(k, "MultiSelectModel", 0, winreg.REG_SZ, "Player")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, sub + r"\command") as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{exe}" --recipe {r.id} "%1"')
+    _notify_shell()
+
+
 def uninstall() -> None:
     if sys.platform != "win32":
         return
     import winreg
-    for base in _KEYS:
+    for base in _KEYS + _RECIPE_KEYS:
         _delete_tree(winreg, winreg.HKEY_CURRENT_USER, base)
     try:
         _sendto_link().unlink(missing_ok=True)

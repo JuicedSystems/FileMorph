@@ -9,12 +9,13 @@ from pathlib import Path
 class Fmt:
     key: str               # canonical id, also the default extension
     label: str             # short human name shown under the extension
-    category: str          # document | sheet | slides | image | audio | video
+    category: str          # document | sheet | slides | image | audio | video | tools
     exts: tuple[str, ...]  # extensions recognised on input (first = output ext)
     input_only: bool = False
     output_only: bool = False  # a conversion style, not a file type to detect (e.g. "trace" -> .svg)
     chip: str = ""             # text on format buttons; defaults to the extension
     name_suffix: str = ""      # added to the output file name ("Logo - trace.svg")
+    keep_ext: bool = False     # the output keeps the source's own extension (SHRINK)
 
     @property
     def ext(self) -> str:
@@ -33,6 +34,7 @@ CATEGORIES: list[tuple[str, str]] = [
     ("image", "Images"),
     ("audio", "Audio"),
     ("video", "Video"),
+    ("tools", "Tools"),
 ]
 CATEGORY_LABEL = dict(CATEGORIES)
 
@@ -86,15 +88,20 @@ _ALL = [
     Fmt("webm", "WebM video", "video", ("webm",)),
     Fmt("avi", "AVI video", "video", ("avi",)),
     Fmt("wmv", "Windows video", "video", ("wmv",), input_only=True),
+    # Tools: the file stays what it is, but gets better (only offered where a direct step exists)
+    Fmt("ocrpdf", "Searchable PDF", "tools", ("pdf",), output_only=True, chip="OCR", name_suffix=" - searchable"),
+    Fmt("shrink", "Smaller file", "tools", ("",), output_only=True, chip="SHRINK", name_suffix=" - small",
+        keep_ext=True),
 ]
 
 FORMATS: dict[str, Fmt] = {f.key: f for f in _ALL}
 _BY_EXT: dict[str, Fmt] = {e: f for f in _ALL if not f.output_only for e in f.exts}
+TOOLS = [f.key for f in _ALL if f.category == "tools"]
 
 # Formats surfaced first for a given source, in order.
 SUGGESTED: dict[str, list[str]] = {
-    "pdf": ["docx", "xlsx", "jpg", "png", "txt"],
-    "docx": ["pdf", "doc", "txt", "html"],
+    "pdf": ["docx", "xlsx", "shrink", "jpg", "png", "txt", "ocrpdf"],
+    "docx": ["pdf", "doc", "txt", "shrink", "html"],
     "doc": ["docx", "pdf", "txt"],
     "odt": ["docx", "pdf"],
     "rtf": ["docx", "pdf"],
@@ -102,37 +109,37 @@ SUGGESTED: dict[str, list[str]] = {
     "md": ["html", "pdf", "docx"],
     "html": ["pdf", "docx", "md"],
     "epub": ["pdf", "docx", "txt"],
-    "xlsx": ["csv", "pdf", "xls", "json"],
+    "xlsx": ["csv", "pdf", "xls", "json", "shrink"],
     "xls": ["xlsx", "csv", "pdf"],
     "ods": ["xlsx", "csv"],
     "csv": ["xlsx", "json", "pdf"],
     "tsv": ["xlsx", "csv"],
     "json": ["xlsx", "csv"],
-    "pptx": ["pdf", "jpg", "png"],
+    "pptx": ["pdf", "shrink", "jpg", "png"],
     "ppt": ["pptx", "pdf"],
     "odp": ["pptx", "pdf"],
-    "png": ["jpg", "pdf", "svg", "trace", "webp", "ico"],
-    "jpg": ["png", "pdf", "svg", "trace", "webp"],
-    "webp": ["png", "jpg", "gif", "trace"],
+    "png": ["jpg", "pdf", "shrink", "svg", "trace", "webp", "ico"],
+    "jpg": ["png", "pdf", "shrink", "svg", "trace", "webp"],
+    "webp": ["png", "jpg", "shrink", "gif", "trace"],
     "svg": ["png", "pdf", "jpg", "trace"],
     "gif": ["mp4", "png", "webp"],
     "heic": ["jpg", "png", "pdf", "trace"],
-    "avif": ["jpg", "png"],
-    "tiff": ["jpg", "png", "pdf", "trace"],
+    "avif": ["jpg", "png", "shrink"],
+    "tiff": ["jpg", "png", "pdf", "shrink", "trace"],
     "bmp": ["png", "jpg", "trace"],
     "ico": ["png"],
-    "mp3": ["wav", "m4a"],
+    "mp3": ["wav", "m4a", "shrink"],
     "wav": ["mp3", "flac"],
-    "m4a": ["mp3", "wav"],
+    "m4a": ["mp3", "wav", "shrink"],
     "flac": ["mp3", "wav"],
     "ogg": ["mp3", "wav"],
     "opus": ["mp3", "wav"],
     "wma": ["mp3", "wav"],
     "aiff": ["mp3", "wav"],
-    "mp4": ["mp3", "gif", "mov", "webm"],
-    "mov": ["mp4", "mp3", "gif"],
-    "mkv": ["mp4", "mp3"],
-    "webm": ["mp4", "mp3", "gif"],
+    "mp4": ["shrink", "mp3", "gif", "mov", "webm"],
+    "mov": ["mp4", "shrink", "mp3", "gif"],
+    "mkv": ["mp4", "shrink", "mp3"],
+    "webm": ["mp4", "shrink", "mp3", "gif"],
     "avi": ["mp4", "mp3"],
     "wmv": ["mp4", "mp3"],
 }

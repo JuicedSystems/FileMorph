@@ -17,6 +17,9 @@ odfpy>=1.4,<2                 # read/write .ods
 Pillow>=11.0,<13
 pillow-heif>=0.18,<2          # HEIC / iPhone photos
 vtracer>=0.6,<0.7               # bitmap -> true vector SVG
+# Offline OCR (PP-OCRv6 ONNX models ship inside the wheel; runs on onnxruntime)
+rapidocr>=3.10,<4
+onnxruntime>=1.20,<2
 # Audio / video
 imageio-ffmpeg>=0.5,<0.7        # bundles ffmpeg
 # User-initiated updates (keep in step with the vpk version used in CI)

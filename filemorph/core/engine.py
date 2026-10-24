@@ -41,7 +41,8 @@ def _new_tmp() -> Path:
 
 
 def _execute(src: Path, src_fmt: str, dst_fmt: str, final_dir: Path, options: dict,
-             progress: ProgressFn | None, cancel: threading.Event | None, tmp: Path) -> list[Path]:
+             progress: ProgressFn | None, cancel: threading.Event | None, tmp: Path,
+             out_stem: str | None = None) -> list[Path]:
     """Run the plan, leaving results in final_dir. Returns produced paths."""
     plan = build_registry().plan(src_fmt, dst_fmt)
     if not plan:
@@ -53,7 +54,10 @@ def _execute(src: Path, src_fmt: str, dst_fmt: str, final_dir: Path, options: di
         final = i == n - 1
         step_dir = final_dir if final else tmp / f"step{i}"
         step_dir.mkdir(parents=True, exist_ok=True)
-        dst = step_dir / f"{src.stem}{FORMATS[edge.dst].name_suffix if final else ''}.{FORMATS[edge.dst].ext}"
+        fmt = FORMATS[edge.dst]
+        ext = cur.suffix.lstrip(".") if fmt.keep_ext else fmt.ext
+        stem = (out_stem or f"{src.stem}{fmt.name_suffix}") if final else src.stem
+        dst = step_dir / f"{stem}.{ext}"
 
         def hop_progress(frac: float, msg: str, _i=i, _label=edge.label):
             if progress:
@@ -194,7 +198,10 @@ def _publish(produced: list[Path], out_dir: Path) -> list[Path]:
 
 
 def convert_file(src: Path, dst_fmt: str, out_dir: Path | None = None, options: dict | None = None,
-                 progress: ProgressFn | None = None, cancel: threading.Event | None = None) -> list[Path]:
+                 progress: ProgressFn | None = None, cancel: threading.Event | None = None,
+                 out_stem: str | None = None) -> list[Path]:
+    """Convert one file. `out_stem` names the result (a recipe's rename pattern); multi-file
+    results still get their " - page 01" suffixes, and nothing is ever overwritten."""
     src = Path(src)
     fmt = detect(src)
     if fmt is None:
@@ -204,7 +211,7 @@ def convert_file(src: Path, dst_fmt: str, out_dir: Path | None = None, options: 
     out_dir = Path(out_dir) if out_dir else src.parent
     tmp = _new_tmp()
     try:
-        produced = _execute(src, fmt.key, dst_fmt, tmp / "out", options or {}, progress, cancel, tmp)
+        produced = _execute(src, fmt.key, dst_fmt, tmp / "out", options or {}, progress, cancel, tmp, out_stem)
         if cancel and cancel.is_set():
             raise Cancelled()
         return _publish(produced, out_dir)

@@ -13,7 +13,7 @@ slides, images, audio and video — **completely offline**. Your files never lea
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-f472b6?style=for-the-badge)](#install)
 [![Release build](https://img.shields.io/github/actions/workflow/status/JuicedSystems/FileMorph/build-windows.yml?style=for-the-badge&label=build)](https://github.com/JuicedSystems/FileMorph/actions/workflows/build-windows.yml)
 
-<sub>Free · 42 formats in, 38 out · TRACE to clean B&W vector · No account, no uploads, no ads</sub>
+<sub>Free · 42 formats in, 38 out · OCR for scans · SHRINK · recipes & watch folders · No account, no uploads, no ads</sub>
 
 <br>
 
@@ -89,6 +89,49 @@ saved **next to the original**, never overwriting anything (`Report (1).docx` if
 
 Changed your mind? **Click the orb or press Esc** while it's converting to cancel.
 
+## Reads scans (OCR)
+
+Scanned PDFs and photos of documents have no real text, just a picture of it. FileMorph reads
+them **on your PC** (no upload, no account) whenever you convert one to Word, Excel, text or HTML:
+
+- **Scan → Word**: paragraphs you can edit, and tables as real Word tables
+- **Scan → Excel**: rows and columns lined up, with amounts as numbers
+- **OCR**: the same PDF, looking exactly the same, with selectable, searchable text
+- Photos of receipts, letters and whiteboards → **TXT**, **DOCX** or **XLSX**
+
+Drop a scanned PDF and **OCR** is the first choice offered. Pages that already have text are
+left exactly as they are. Reads English and about 50 other Latin-script languages.
+
+## SHRINK: same file, smaller
+
+Pick **SHRINK** when something is too big to email or upload. You get the same format with the
+weight taken out (`Report - small.pdf`), and the orb shows what you saved: *6.2 MB → 1.4 MB*.
+
+| | What shrinks |
+|---|---|
+| **PDF** | pictures re-encoded at a sensible resolution, fonts and leftovers compacted. Text stays text |
+| **Photos** (JPG, PNG, WebP, AVIF, TIFF) | re-encoded, very large photos scaled down; colours and orientation kept |
+| **Word, PowerPoint, Excel** | the pictures inside them |
+| **Video** (MP4, MOV, MKV, WebM) and **audio** (MP3, M4A, OGG, Opus) | re-encoded at a lower bitrate, video capped at 1080p |
+
+*Strength* under •••: **Light** (barely visible), **Balanced** (default) or **Strong** (smallest).
+If a file is already as small as it gets, FileMorph says so and doesn't make a copy.
+
+## Recipes and watch folders
+
+A recipe is a conversion you do often, saved: the format, its options, where files go and how
+they're named (`{name}`, `{date}`, `{time}`, `{n}`). Make one from **All formats → Save as
+recipe…**, or with the ★ button in the panel. Then:
+
+- **On the orb**: drop files and the recipe is the first chip (★JPG). Hover it to see which one.
+- **In Explorer**: right-click files → **FileMorph recipes** → pick one.
+- **Watch a folder**: point a recipe at a folder (Downloads, a scanner's output, a phone
+  import folder) and new files are converted as they arrive, with one notification per batch.
+  Files already in the folder are left alone, half-downloaded files are waited for, nothing is
+  converted twice, and FileMorph never re-converts its own output. Files that arrive while
+  FileMorph is closed are done the next time it starts. **Pause watching folders** is in the
+  tray menu.
+
 ## TRACE: clean black & white vectors
 
 Drop a logo, sketch, signature, scan, photo or PDF and pick **TRACE**. FileMorph turns it into a
@@ -145,6 +188,9 @@ conversions that make no sense, so every format you're offered is one that works
 |---|---|
 | **Right-click a file** | **Convert with FileMorph** (on Windows 11, under *Show more options*) or **Send to → FileMorph** |
 | **Convert many files** | Drop several files or a whole folder. Only formats every file can become are offered. |
+| **Read a scan** | Drop a scanned PDF → **OCR** for a searchable PDF, or **DOCX** / **XLSX** for editable text |
+| **Make it smaller** | Drop a file → **SHRINK**. *Strength* is under ••• |
+| **Repeat a conversion** | All formats → **Save as recipe…**. Then it's a ★ chip, a right-click entry, or a watched folder |
 | **Make one PDF** | Drop a mix of files → ••• → PDF → turn on **Combine into one PDF** |
 | **Trace to black & white** | Drop an image or PDF → **TRACE**. Adjust *Detail* and *Darkness* under ••• |
 | **Cancel** | Click the orb or press **Esc** while it's converting |
@@ -231,6 +277,7 @@ python -m filemorph --classic       # the original single-window UI
 ```bash
 python tests/make_samples.py tests/_samples
 python tests/run_matrix.py tests/_samples tests/_out --jobs 4   # every sample → every offered format, outputs validated
+python tests/test_features.py                                   # OCR quality, SHRINK, recipes, watch folders
 python tests/node_screens.py tests/_samples _shots              # drives the real UI end to end and screenshots each state
 python tests/update_flow.py _updates                            # every update screen against a simulated release feed
 python -m filemorph --selftest selftest.json                    # what CI runs against the packaged .exe
@@ -293,11 +340,12 @@ docs/media/            images and video used on this page
 [Pillow](https://python-pillow.org/) + [pillow-heif](https://github.com/bigcat88/pillow_heif) ·
 [vtracer](https://github.com/visioncortex/vtracer) ·
 [OpenCV](https://opencv.org/) ·
+[RapidOCR](https://github.com/RapidAI/RapidOCR) (PP-OCR models) + [ONNX Runtime](https://onnxruntime.ai/) ·
 [FFmpeg](https://ffmpeg.org/) ·
 [Velopack](https://velopack.io/) ·
 [Geist](https://vercel.com/font) font
 
-<sub>Third-party components keep their own licenses — for example PyMuPDF is AGPL-3.0, Pandoc and the bundled FFmpeg build are GPL, PySide6 is LGPL and Geist is SIL OFL.</sub>
+<sub>Third-party components keep their own licenses — for example PyMuPDF is AGPL-3.0, Pandoc and the bundled FFmpeg build are GPL, PySide6 is LGPL, RapidOCR and its PaddleOCR models are Apache-2.0, ONNX Runtime is MIT and Geist is SIL OFL.</sub>
 
 <div align="center">
 <br>

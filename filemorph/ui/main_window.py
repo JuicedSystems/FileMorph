@@ -171,7 +171,8 @@ class MainWindow(QWidget):
         cats.setSpacing(6)
         cats.addStretch(1)
         for key, _ in CATEGORIES:
-            cats.addWidget(_Pill(CATEGORY_LABEL[key], th.CATEGORY_COLOR[key]))
+            if key != "tools":  # SHRINK/OCR are things to do, not kinds of file you can drop
+                cats.addWidget(_Pill(CATEGORY_LABEL[key], th.CATEGORY_COLOR[key]))
         cats.addStretch(1)
         v.addLayout(cats)
         sub = label("40+ formats including PDF, Word, Excel, PowerPoint, PNG, JPG, SVG, HEIC, MP3 and MP4",
@@ -944,7 +945,9 @@ def _file_filter() -> str:
     groups = []
     all_exts = []
     for cat, cat_label in CATEGORIES:
-        exts = [f"*.{e}" for f in FORMATS.values() if f.category == cat for e in f.exts]
+        exts = [f"*.{e}" for f in FORMATS.values() if f.category == cat and not f.output_only for e in f.exts]
+        if not exts:
+            continue
         all_exts += exts
         groups.append(f"{cat_label} ({' '.join(exts)})")
     return ";;".join([f"All supported files ({' '.join(all_exts)})"] + groups + ["All files (*)"])

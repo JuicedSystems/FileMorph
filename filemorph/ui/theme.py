@@ -47,7 +47,7 @@ DARK = Theme(True, bg="#141416", surface="#1D1D21", surface_hover="#25252A", bor
 # One hue per family so a file's type is recognisable at a glance.
 CATEGORY_COLOR = {
     "document": "#2F6FEB", "sheet": "#1A9A5B", "slides": "#E0661B",
-    "image": "#C2398C", "audio": "#7C4DDB", "video": "#D93A3A",
+    "image": "#C2398C", "audio": "#7C4DDB", "video": "#D93A3A", "tools": "#0E7490",
 }
 FORMAT_COLOR = {"pdf": "#D93A3A", "svg": "#E0901B", "gif": "#B0459C", "json": "#5B6B7F",
                 "txt": "#5B6B7F", "md": "#5B6B7F", "html": "#D0532A"}

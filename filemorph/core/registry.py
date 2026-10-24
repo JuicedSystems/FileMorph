@@ -33,6 +33,7 @@ class Ctx:
     options: dict = field(default_factory=dict)
     progress_cb: Callable[[float, str], None] | None = None
     cancel_event: threading.Event | None = None
+    scratch: dict = field(default_factory=dict)  # facts one step shares with itself (e.g. OCR results)
 
     def progress(self, frac: float, msg: str = "") -> None:
         self.check_cancel()
@@ -88,13 +89,20 @@ _BLOCKED = {
     "document": {"gif", "ico", "bmp", "svg", "avif", "trace"},
     "slides": {"html", "md", "epub", "rtf", "odt", "doc", "docx", "gif", "ico", "bmp", "svg", "avif", "trace"},
 }
+_OCR_TARGETS = {"txt", "docx", "xlsx"}
+_NO_OCR_IMAGES = {"svg", "ico", "gif"}
 _PDF_OK_IMAGE_TARGETS = {"png", "jpg", "webp", "tiff", "svg", "trace"}
 
 
-def target_allowed(src: str, dst: str) -> bool:
+def target_allowed(src: str, dst: str, direct: bool = True) -> bool:
     if src == dst or FORMATS[dst].input_only or FORMATS[src].output_only:
         return False
     s_cat = FORMATS[src].category
+    if dst in _OCR_TARGETS and s_cat == "image":
+        return src not in _NO_OCR_IMAGES  # photos of documents -> text, through OCR
+    if FORMATS[dst].category == "tools":
+        # SHRINK only where it is one direct step; OCR from PDFs and photos of pages
+        return direct if dst != "ocrpdf" else src == "pdf" or (s_cat == "image" and src not in _NO_OCR_IMAGES)
     d_cat = FORMATS[dst].category
     if dst in _BLOCKED.get(s_cat, ()):
         # PDF is the exception: it renders cleanly to SVG
@@ -154,7 +162,8 @@ class Registry:
 
     def targets(self, src: str) -> dict[str, list[Edge]]:
         """All formats `src` can sensibly be converted to, with the plan for each."""
-        return {d: path for d, (_, path) in self._search(src).items() if target_allowed(src, d)}
+        return {d: path for d, (_, path) in self._search(src).items()
+                if target_allowed(src, d, direct=len(path) == 1)}
 
 
 def unique_path(path: Path) -> Path:

@@ -34,11 +34,24 @@ CAP_TOP = 34             # caption pill top edge
 BASE = 96                # idle orb size
 
 
+def star_path(c: QPointF, r: float) -> QPainterPath:
+    """Five-point star (the bundled fonts have no ★ glyph)."""
+    path = QPainterPath()
+    for i in range(10):
+        rad = r if i % 2 == 0 else r * 0.44
+        pt = QPointF(c.x() + rad * math.sin(math.pi * i / 5), c.y() - rad * math.cos(math.pi * i / 5))
+        path.moveTo(pt) if i == 0 else path.lineTo(pt)
+    path.closeSubpath()
+    return path
+
+
 @dataclass
 class Chip:
     key: str
     label: str
     more: bool = False
+    hint: str = ""             # caption while hovered (a recipe's name)
+    star: bool = False         # a recipe: drawn with a star in front of the label
     enter: mo.Pulse = field(default_factory=lambda: mo.Pulse(0.55, mo.soft))
 
 
@@ -161,15 +174,17 @@ class NodeWindow(QWidget):
         self.fill.set(0)
         self._go("idle")
 
-    def show_picking(self, badge: str, name: str, chips: list[tuple[str, str]], more: bool):
-        self.chips = [Chip(k, lbl) for k, lbl in chips]
+    def show_picking(self, badge: str, name: str, chips: list[tuple], more: bool):
+        """chips: (key, label) or (key, label, hint)."""
+        self.chips = [Chip(*c) if len(c) < 3 else Chip(c[0], c[1], hint=c[2], star=True) for c in chips]
         if more:
             self.chips.append(Chip("__more__", "•••", more=True))
         for i, c in enumerate(self.chips):
             c.enter.fire(delay=0.2 + i * 0.05)
         self.hover_idx = -1
         self.ind_op.set(0)
-        self._set_caption([("k", badge), ("trunc", name), ("dim", "→ pick a format")])
+        self._pick_caption = [("k", badge), ("trunc", name), ("dim", "→ pick a format")]
+        self._set_caption(self._pick_caption)
         self._go("picking")
         self.raise_()
         self.activateWindow()
@@ -201,8 +216,8 @@ class NodeWindow(QWidget):
         self.show_idle()
         self._set_caption([("dim", "Cancelled")])
 
-    def show_error(self, msg: str):
-        self._set_caption([("alert", ""), ("text", "Couldn't convert"), ("dim", "· click for details")])
+    def show_error(self, msg: str, title: str = ""):
+        self._set_caption([("alert", ""), ("text", title or "Couldn't convert"), ("dim", "· click for details")])
         self.error_msg = msg
         self._go("error")
         self.shake.fire()
@@ -557,6 +572,14 @@ class NodeWindow(QWidget):
                 p.setBrush(col)
                 for dx in (-7, 0, 7):
                     p.drawEllipse(QPointF(dx, 0), 2.1, 2.1)
+            elif chip.star:
+                tw = QFontMetricsF(f).horizontalAdvance(chip.label)
+                x0 = -(tw + 13) / 2
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#0a0b10") if on else QColor("#ffd27a"))
+                p.drawPath(star_path(QPointF(x0 + 4.5, -0.5), 5))
+                p.setPen(col)
+                p.drawText(QRectF(x0 + 13, -14, tw + 2, 28), Qt.AlignVCenter | Qt.AlignLeft, chip.label)
             else:
                 p.setPen(col)
                 p.drawText(QRectF(-cr.width() / 2, -14, cr.width(), 28), Qt.AlignCenter, chip.label)
@@ -588,7 +611,7 @@ class NodeWindow(QWidget):
         for kind, text in parts:
             if kind == "k":
                 items.append((kind, text, fmk.horizontalAdvance(text) + 12))
-            elif kind in ("ok", "alert"):
+            elif kind in ("ok", "alert", "star"):
                 items.append((kind, text, 14))
             else:
                 if kind == "trunc":
@@ -620,6 +643,10 @@ class NodeWindow(QWidget):
                 p.setFont(fk)
                 p.setPen(QColor(st.INK))
                 p.drawText(kr, Qt.AlignCenter, text)
+            elif kind == "star":
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#ffd27a"))
+                p.drawPath(star_path(QPointF(x + 7, 0), 6.5))
             elif kind == "ok":
                 p.save()
                 p.translate(x + 7, 0)
@@ -729,7 +756,12 @@ class NodeWindow(QWidget):
     def _set_hover(self, i: int):
         if i == self.hover_idx:
             return
+        was = self.chips[self.hover_idx].hint if 0 <= self.hover_idx < len(self.chips) else ""
         self.hover_idx = i
+        hint = self.chips[i].hint if 0 <= i < len(self.chips) else ""
+        if self.mode == "picking" and (hint or was):
+            # a recipe chip says what it will do; leaving it brings the file's caption back
+            self.caption = Caption([("star", ""), ("trunc", hint)] if hint else self._pick_caption)  # unfired: shown at once
         if i >= 0:
             if self.ind_op.end < 0.5:
                 self.ind_x.set(i * CW)  # appear in place, then glide between chips

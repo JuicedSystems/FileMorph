@@ -10,6 +10,26 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+SCAN_LINES = [("INVOICE 10442",), ("Billed to: Northwind Traders",), ("Item", "Qty", "Price"),
+              ("Widget", "2", "14.50"), ("Gadget", "10", "120.00"), ("Total", "", "149.00"),
+              ("Thank you for your business.",)]
+
+
+def make_scan():
+    """A letter-size page of text at 200 dpi, as a scanner would produce it."""
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    im = Image.new("RGB", (1700, 2200), "white")
+    d = ImageDraw.Draw(im)
+    try:
+        f = ImageFont.truetype("times.ttf", 40)
+    except OSError:
+        f = ImageFont.load_default(40)
+    for i, parts in enumerate(SCAN_LINES):
+        for x, text in zip((150, 600, 850), parts):
+            d.text((x, 200 + i * 80), text, fill="black", font=f)
+    return im.rotate(0.8, fillcolor="white").filter(ImageFilter.GaussianBlur(0.7))
+
+
 def make(out: Path) -> None:
     from PIL import Image, ImageDraw
     import pillow_heif
@@ -96,6 +116,15 @@ def make(out: Path) -> None:
         w.end_page()
         story = pymupdf.Story(html)
     w.close()
+
+    # Scanned invoice (no text layer: a picture of a page, a little crooked and soft) -> OCR
+    scan = make_scan()
+    scan.save(out / "scan.png")
+    buf = __import__("io").BytesIO()
+    scan.convert("L").save(buf, "JPEG", quality=80)
+    sdoc = pymupdf.open()
+    sdoc.new_page(width=612, height=792).insert_image(pymupdf.Rect(0, 0, 612, 792), stream=buf.getvalue())
+    sdoc.save(out / "scan.pdf")
 
     # ---------- spreadsheets
     from openpyxl import Workbook
