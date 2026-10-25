@@ -197,8 +197,8 @@ conversions that make no sense, so every format you're offered is one that works
 | **Cancel** | Click the orb or press **Esc** while it's converting |
 | **Keyboard** | In the format row: **← →** to move, **Enter** to convert, **Esc** to close |
 | **Choose where files go** | Panel → turn off *Save next to original* → pick a folder |
-| **Move or restyle the orb** | Drag it anywhere · right-click it for colorways (Prism, Citrus, Frost), *Keep on top* and *Quit* |
-| **Hide it** | Click the tray icon to show or hide the orb |
+| **Move or restyle the orb** | Drag it anywhere · right-click it for colorways (Prism, Citrus, Frost), *Orb size* (Standard, Compact, Mini), *Keep on top* and *Quit* |
+| **Hide it** | Right-click the orb → **Hide to tray**. Click the tray icon to bring it back. Explorer's right-click menu and watch folders keep working while it's hidden |
 
 ## Privacy
 

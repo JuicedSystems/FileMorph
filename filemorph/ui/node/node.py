@@ -1,7 +1,7 @@
 """The floating Morph node — canvas option B, "Shape-shift".
 
-idle        96px orb, conic aura rim, slow breath, caption on mouse-over
-hover       file dragged over: grows to 120px, wobbles, bobbing down-arrow, "Release to convert"
+idle        96px orb (Compact 76, Mini 60), conic aura rim, slow breath, caption on mouse-over
+hover       file dragged over: grows by a quarter, wobbles, bobbing down-arrow, "Release to convert"
 picking     stretches into a pill of format chips; a white indicator springs to the hovered chip
 converting  shrinks back to an orb that fills with liquid (moving wave) + percentage
 done        check-mark draws itself, shockwave ring, squash-and-stretch, "<file> saved"
@@ -31,7 +31,8 @@ W, H = 500, 330          # window size (transparent around the node; fits the pi
 CX, CY = W / 2, 188      # node centre inside the window
 CW = 64                  # chip width in the pill
 CAP_TOP = 34             # caption pill top edge
-BASE = 96                # idle orb size
+BASE = 96                # idle orb size at Standard
+ORB_SIZES = {"standard": 96, "compact": 76, "mini": 60}   # ⋯ → Orb size
 
 
 def star_path(c: QPointF, r: float) -> QPainterPath:
@@ -85,6 +86,7 @@ class NodeWindow(QWidget):
 
         self.c1, self.c2, self.c3 = (QColor(c) for c in st.COLORWAYS[st.DEFAULT_WAY])
         self.mode = "idle"
+        self.base = BASE   # the orb's size; the format pill and captions keep their full size
         self.wt, self.ht, self.brt = mo.Tween(BASE), mo.Tween(BASE), mo.Tween(BASE / 2)
         self.inset = mo.Tween(2, 0.6)
         self.ind_x = mo.Tween(0, 0.5)
@@ -138,6 +140,17 @@ class NodeWindow(QWidget):
         self.c1, self.c2, self.c3 = (QColor(c) for c in colors)
         self.update()
 
+    @property
+    def osc(self) -> float:
+        """Orb scale: 1 at Standard."""
+        return self.base / BASE
+
+    def set_orb_size(self, key: str):
+        self.base = ORB_SIZES.get(key, BASE)
+        if self.mode not in ("picking", "hover"):
+            self.wt.to(self.base), self.ht.to(self.base), self.brt.to(self.base / 2)
+        self.update()
+
     def center_global(self) -> QPoint:
         return self.pos() + QPoint(int(CX), int(CY))
 
@@ -152,14 +165,15 @@ class NodeWindow(QWidget):
         if mode != "picking":
             self.glyph_in.fire()
         if mode in ("hover",):
-            self.wt.to(120), self.ht.to(120), self.brt.to(40)
-            self.inset.to(8)
+            big = self.base * 1.25
+            self.wt.to(big), self.ht.to(big), self.brt.to(big / 3)
+            self.inset.to(8 * self.osc)
         elif mode == "picking":
             w = len(self.chips) * CW + 12
             self.wt.to(w), self.ht.to(68), self.brt.to(34)
             self.inset.to(2)
         else:
-            self.wt.to(BASE), self.ht.to(BASE), self.brt.to(BASE / 2)
+            self.wt.to(self.base), self.ht.to(self.base), self.brt.to(self.base / 2)
             self.inset.to(2)
         self.spin_speed.to(300 if mode in ("hover", "converting") else 60)
         if mode != "picking":
@@ -369,7 +383,7 @@ class NodeWindow(QWidget):
 
     def _paint_shock(self, p: QPainter):
         k = self.shock.value()
-        rad = 48 * (1 + 1.4 * k)
+        rad = self.base / 2 * (1 + 1.4 * k)
         p.setPen(QPen(QColor(255, 255, 255, int(255 * 0.45 * (1 - k)) if k < 1 else 0), 1.5))
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(QPointF(CX, CY), rad, rad)
@@ -457,6 +471,7 @@ class NodeWindow(QWidget):
 
     def _paint_content(self, p: QPainter):
         p.save()
+        p.scale(self.osc, self.osc)  # glyphs are drawn for the 96px orb
         white = QColor("#ffffff")
         if self.mode == "idle":
             self._glyph_xform(p)
@@ -468,6 +483,8 @@ class NodeWindow(QWidget):
             self._glyph_xform(p)
             self._icon(p, [("M", 12, 4), ("v", 15), ("M", 6, 13), ("l", 6, 6), ("l", 6, -6)], 28, 2.0, white)
         elif self.mode == "converting":
+            k = (0.5 + 0.5 * self.osc) / self.osc  # the percentage shrinks less than the orb
+            p.scale(k, k)
             p.setFont(st.font(18, 600, mono=True))
             txt = f"{round(self.progress * 100)}%"
             box = QRectF(-60, -14, 120, 28)
@@ -623,8 +640,9 @@ class NodeWindow(QWidget):
         k = born.value() if born else 1
         raw = born.raw() if born else 1
         p.save()
-        self._cap_rect = QRectF(CX - w / 2, CAP_TOP, w, h)  # for clicks on the caption pill
-        p.translate(CX, CAP_TOP + h / 2)
+        top = CAP_TOP + (BASE - self.base) / 2  # same gap above a smaller orb
+        self._cap_rect = QRectF(CX - w / 2, top, w, h)  # for clicks on the caption pill
+        p.translate(CX, top + h / 2)
         p.translate(0, -8 * (1 - k))
         sc = 0.88 + 0.12 * k
         p.scale(sc, sc)

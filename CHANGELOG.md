@@ -3,6 +3,16 @@
 Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
+## 0.4.1
+**A smaller orb, if you like.** Right-click the orb → **Orb size** → *Standard*, *Compact* or
+*Mini*. The format chips still open at full size when you drop a file, so they stay easy to read
+and click.
+
+**Hide to tray.** Right-click the orb → **Hide to tray** to tuck it away. FileMorph keeps running:
+right-click → *Convert with FileMorph* in Explorer and watch folders still work, and the orb
+pops up when there's something to show, then goes back to the tray. Click the FileMorph icon
+in the tray to bring it back for good. It stays hidden after a restart until you do.
+
 ## 0.4.0
 **New: reads scans.** Scanned PDFs and photos of documents now turn into real, editable text,
 right on your PC. A scanned invoice becomes a Word document with proper tables, or an Excel

@@ -1,4 +1,4 @@
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # Where installed copies look for updates (only when the user clicks "Check for updates").
 # Must be a PUBLIC GitHub repo's URL (its Releases hold the update packages), or any static

@@ -25,7 +25,7 @@ from ..main_window import open_path, reveal_path
 from ...core import proc
 from ..worker import ConvertWorker, downloads_dir, scan_folder
 from . import style as st
-from .node import BASE, NodeWindow
+from .node import ORB_SIZES, NodeWindow
 from .panel import PanelWindow, paint_orb
 from .updates import UpdateRunner
 from .watch import WatchService
@@ -72,6 +72,13 @@ class MorphController(QObject):
         on_top = self.settings.value("on_top", True, type=bool)
         self.node.set_on_top(on_top)
         self.panel.set_on_top(on_top)
+        self.orb_size = self.settings.value("orb_size", "standard")
+        self.orb_size = self.orb_size if self.orb_size in ORB_SIZES else "standard"
+        self.node.set_orb_size(self.orb_size)
+        # "Hide to tray": the orb stays out of sight until it's brought back from the tray (or until
+        # there's something to show, e.g. files sent from Explorer). Needs a tray to come back from.
+        self.tucked = (self.settings.value("node_hidden", False, type=bool)
+                       and QSystemTrayIcon.isSystemTrayAvailable())
         self._sync_save()
         self.panel.set_recent(self.history)
 
@@ -117,7 +124,8 @@ class MorphController(QObject):
         self.watch.burst_done.connect(self._watch_burst)
         self._setup_tray()
         self._place_node()
-        self.node.show()
+        if not self.tucked:
+            self.node.show()
 
     # ------------------------------------------------------------- placement & look
     def _screen_rect(self, at: QPoint | None = None):
@@ -155,6 +163,13 @@ class MorphController(QObject):
             ic.addPixmap(pm)
         return ic
 
+    def _set_orb_size(self, key: str):
+        self.orb_size = key if key in ORB_SIZES else "standard"
+        self.settings.setValue("orb_size", self.orb_size)
+        self.node.set_orb_size(self.orb_size)
+        for a in getattr(self, "size_actions", {}).values():
+            a.setChecked(a.data() == self.orb_size)
+
     def _set_on_top(self, on: bool):
         self.settings.setValue("on_top", on)
         self.node.set_on_top(on)
@@ -175,6 +190,12 @@ class MorphController(QObject):
     def _build_menu(self) -> QMenu:
         m = QMenu()
         m.setStyleSheet(MENU_CSS)
+        self.act_hide = QAction("Hide to tray", m)
+        self.act_hide.triggered.connect(self.hide_to_tray)
+        m.addAction(self.act_hide)
+        self.act_hide_sep = m.addSeparator()
+        # only offered while the orb (or panel) is on screen and there's a tray to bring it back from
+        m.aboutToShow.connect(self._refresh_menu)
         m.addAction("Open FileMorph", self.expand)
         m.addAction("Convert files…", self.browse)
         m.addAction("Recipes…", self.show_recipes)
@@ -182,7 +203,7 @@ class MorphController(QObject):
         self.act_pause.triggered.connect(self._pause_watching)
         m.addAction(self.act_pause)
         m.addSeparator()
-        self.act_show = QAction("Show floating node", m, checkable=True, checked=True)
+        self.act_show = QAction("Show floating orb", m, checkable=True, checked=not self.tucked)
         self.act_show.triggered.connect(self._toggle_node)
         m.addAction(self.act_show)
         self.act_top = QAction("Keep on top", m, checkable=True,
@@ -197,6 +218,17 @@ class MorphController(QObject):
             a.triggered.connect(lambda _=False, n=name: self._apply_colorway(n))
             grp.addAction(a)
             sub.addAction(a)
+        sizes = m.addMenu("Orb size")
+        sizes.setStyleSheet(MENU_CSS)
+        sgrp = QActionGroup(sizes)
+        self.size_actions = {}
+        for key, label in (("standard", "Standard"), ("compact", "Compact"), ("mini", "Mini")):
+            a = QAction(label, sizes, checkable=True, checked=key == self.orb_size)
+            a.setData(key)
+            a.triggered.connect(lambda _=False, k=key: self._set_orb_size(k))
+            sgrp.addAction(a)
+            sizes.addAction(a)
+            self.size_actions[key] = a
         m.addSeparator()
         m.addAction("Check for updates…", self.check_updates)
         about = QAction(f"FileMorph {__version__}", m)
@@ -204,6 +236,42 @@ class MorphController(QObject):
         m.addAction(about)
         m.addAction("Quit FileMorph", self.quit)
         return m
+
+    def _refresh_menu(self):
+        can = QSystemTrayIcon.isSystemTrayAvailable() and (self.node.isVisible() or self.panel.isVisible())
+        self.act_hide.setVisible(can)
+        self.act_hide_sep.setVisible(can)
+
+    def _set_tucked(self, on: bool):
+        self.tucked = on
+        self.settings.setValue("node_hidden", on)
+        self.act_show.setChecked(not on)
+
+    def hide_to_tray(self):
+        """Right-click → Hide to tray: FileMorph keeps running (Explorer's menu, watch folders,
+        the tray icon); a click on the tray icon brings the orb back."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        if self.worker:
+            # converting: the orb is the progress display; tuck it away once the run is over
+            self._set_tucked(True)
+            self.tray.showMessage("FileMorph", "The orb will hide when this conversion finishes.",
+                                  QSystemTrayIcon.Information, 4000)
+            return
+        first = not self.settings.value("hid_once", False, type=bool)
+        self._set_tucked(True)
+        self.node.hide()
+        self.panel.hide()
+        if first:
+            self.settings.setValue("hid_once", True)
+            self.tray.showMessage("FileMorph is still running",
+                                  "Click the FileMorph icon in the tray to bring the orb back.",
+                                  QSystemTrayIcon.Information, 6000)
+
+    def _rest(self):
+        """Back to idle: if the orb was hidden to the tray, it goes back there."""
+        if self.tucked and not self.worker and not self.panel.isVisible():
+            self.node.hide()
 
     def _tray_activated(self, reason):
         # Windows sends Trigger and then DoubleClick for a double-click: toggling on both would
@@ -220,10 +288,9 @@ class MorphController(QObject):
         if not self.node.isVisible():
             self.node.show()
         self.node.raise_()
-        self.act_show.setChecked(True)
 
     def _toggle_node(self, show: bool):
-        self.act_show.setChecked(show)
+        self._set_tucked(not show)
         if show:
             self.panel.hide()
             self.node.show()
@@ -275,20 +342,22 @@ class MorphController(QObject):
         self._sync_save()
         c = self.node.center_global()
         self.node.hide()
-        self.panel.open_at(c, BASE, self._screen_rect(c))
+        self.panel.open_at(c, self.node.base, self._screen_rect(c))
 
     def collapse(self):
         self.panel.hide()
         if self._panel_moved:
             # the node follows the panel's bottom-right corner when the panel was dragged
             box = self.panel.box_global_rect()
-            c = QPoint(box.right() - BASE // 2 - 8 + 1, box.bottom() - BASE // 2 - 8 + 1)
+            b = self.node.base
+            c = QPoint(box.right() - b // 2 - 8 + 1, box.bottom() - b // 2 - 8 + 1)
             self.node.move_center(c)
             self.settings.setValue("node_pos", c)
             self._panel_moved = False
+        if self.tucked and not self.worker:
+            return  # opened from the tray while hidden: closing the panel goes back to the tray
         self.node.show()
         self.node.raise_()
-        self.act_show.setChecked(True)
 
     def browse(self):
         start = self.settings.value("last_dir", str(Path.home()))
@@ -308,7 +377,7 @@ class MorphController(QObject):
         c = self.node.center_global()
         self.node.hide()
         self.panel.show_formats(self._summary(), self.targets, None, self._options_for, self.settings)
-        self.panel.open_at(c, BASE, self._screen_rect(c))
+        self.panel.open_at(c, self.node.base, self._screen_rect(c))
 
     # ------------------------------------------------------------- save location
     def _out_dir(self) -> Path | None:
@@ -456,6 +525,7 @@ class MorphController(QObject):
     def _cancel_pick(self):
         self.files = []
         self.node.show_idle()
+        self._rest()
 
     def cancel_conversion(self):
         """Stop at once from the user's point of view. The worker finishes winding down in the
@@ -677,12 +747,14 @@ class MorphController(QObject):
         if self.node.mode in ("done", "error"):
             self._done_has_errors = False
             self.node.show_idle()
+            self._rest()
 
     def _node_clicked(self):
         mode = self.node.mode
         if mode == "done" and self.last_outputs and not getattr(self, "_done_has_errors", False):
             self.idle_timer.stop()
             self.node.show_idle()
+            self._rest()
             out = Path(self.last_outputs[0])
             try:
                 reveal_path(out) if len(self.last_outputs) > 1 else open_path(out)
@@ -707,7 +779,7 @@ class MorphController(QObject):
         if not self.panel.isVisible():
             c = self.node.center_global()
             self.node.hide()
-            self.panel.open_at(c, BASE, self._screen_rect(c))
+            self.panel.open_at(c, self.node.base, self._screen_rect(c))
 
     def check_updates(self):
         if self.updater is None:
@@ -800,6 +872,9 @@ class MorphController(QObject):
 
     def show_updated(self, version: str):
         """Called after Velopack relaunches us on a new version."""
+        if self.tucked and not self.node.isVisible():
+            self.tray.showMessage("FileMorph", f"Updated to {version}", QSystemTrayIcon.Information, 5000)
+            return
         self.node._set_caption([("ok", ""), ("text", f"Updated to {version}")])
         self.node.update()
         QTimer.singleShot(5000, lambda: self.node.mode == "idle" and setattr(self.node, "caption", None))
