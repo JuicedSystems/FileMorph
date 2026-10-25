@@ -20,6 +20,7 @@ VSVersionInfo(
       StringStruct('FileDescription', 'FileMorph - drag-and-drop file converter'),
       StringStruct('FileVersion', '{__version__}'),
       StringStruct('InternalName', 'FileMorph'),
+      StringStruct('LegalCopyright', 'Copyright (c) 2026 Juiced Systems. AGPL-3.0'),
       StringStruct('OriginalFilename', 'FileMorph.exe'),
       StringStruct('ProductName', 'FileMorph'),
       StringStruct('ProductVersion', '{__version__}')])]),

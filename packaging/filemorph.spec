@@ -28,7 +28,8 @@ for pkg in ("pypandoc", "imageio_ffmpeg", "pymupdf", "pillow_heif", "vtracer", "
     hiddenimports += h
 
 datas += [(str(ROOT / "assets" / "icon.ico"), "assets"), (str(ROOT / "assets" / "icon.png"), "assets"),
-          (str(ROOT / "assets" / "fonts"), "assets/fonts")]   # Geist + Geist Mono (OFL) for the Morph UI
+          (str(ROOT / "assets" / "fonts"), "assets/fonts"),   # Geist + Geist Mono (OFL) for the Morph UI
+          (str(ROOT / "LICENSE"), ".")]                       # AGPL-3.0 text ships with the app
 hiddenimports += ["PySide6.QtNetwork", "PySide6.QtSvg"]
 if sys.platform == "win32":
     hiddenimports += ["win32com", "win32com.client", "pythoncom", "pywintypes", "winreg"]

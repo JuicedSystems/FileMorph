@@ -11,6 +11,7 @@ slides, images, audio and video — **completely offline**. Your files never lea
 
 [![Latest release](https://img.shields.io/github/v/release/JuicedSystems/FileMorph?style=for-the-badge&label=release&color=7c5cff)](#install)
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-f472b6?style=for-the-badge)](#install)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-a3e635?style=for-the-badge)](LICENSE)
 [![Release build](https://img.shields.io/github/actions/workflow/status/JuicedSystems/FileMorph/build-windows.yml?style=for-the-badge&label=build)](https://github.com/JuicedSystems/FileMorph/actions/workflows/build-windows.yml)
 
 <sub>Free · 42 formats in, 38 out · OCR for scans · SHRINK · recipes & watch folders · No account, no uploads, no ads</sub>
@@ -344,6 +345,15 @@ docs/media/            images and video used on this page
 [FFmpeg](https://ffmpeg.org/) ·
 [Velopack](https://velopack.io/) ·
 [Geist](https://vercel.com/font) font
+
+## License
+
+FileMorph is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License v3.0](LICENSE). It comes with **no warranty**. The complete
+source code for every release is in this repository, and each release's source is tagged
+(for example `v0.4.0`).
+
+Copyright © 2026 Juiced Systems
 
 <sub>Third-party components keep their own licenses — for example PyMuPDF is AGPL-3.0, Pandoc and the bundled FFmpeg build are GPL, PySide6 is LGPL, RapidOCR and its PaddleOCR models are Apache-2.0, ONNX Runtime is MIT and Geist is SIL OFL.</sub>
 
