@@ -20,6 +20,12 @@ slides, images, audio and video — **completely offline**. Your files never lea
 
 <img src="docs/media/hero.gif" width="800" alt="Dropping a HEIC photo on the FileMorph orb, picking JPG and getting the converted file">
 
+### ▶ Watch the tour (1:44)
+
+<a href="docs/media/FileMorph-how-to.mp4"><img src="docs/media/how-to-poster.jpg" width="800" alt="FileMorph how-to video: drop, pick a format, done, plus TRACE, OCR, SHRINK, recipes, watch folders and more"></a>
+
+<sub>Every feature in under two minutes: drop, pick, convert, batches, TRACE · OCR · SHRINK, recipes, watch folders, Explorer, the panel and updates.</sub>
+
 
 </div>
 
@@ -325,7 +331,7 @@ filemorph/
   ui/                  conversion worker, classic window
 packaging/             PyInstaller spec, build.ps1, release-notes / icon / version-info generators
 tests/                 sample generator, conversion matrix, UI and update-flow drivers
-marketing/             how-to video renderer and README image renderer
+marketing/             how-to film (howto/), README image renderer
 docs/media/            images and video used on this page
 ```
 </details>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>FileMorph — How it works</title>
+<style>
+@font-face{font-family:"Geist";src:url(../../assets/fonts/Geist-Regular.ttf);font-weight:400}
+@font-face{font-family:"Geist";src:url(../../assets/fonts/Geist-Medium.ttf);font-weight:500}
+@font-face{font-family:"Geist";src:url(../../assets/fonts/Geist-SemiBold.ttf);font-weight:600}
+@font-face{font-family:"Geist";src:url(../../assets/fonts/Geist-Bold.ttf);font-weight:700}
+@font-face{font-family:"Geist Mono";src:url(../../assets/fonts/GeistMono-Medium.ttf);font-weight:400 500}
+@font-face{font-family:"Geist Mono";src:url(../../assets/fonts/GeistMono-SemiBold.ttf);font-weight:600}
+@font-face{font-family:"Geist Mono";src:url(../../assets/fonts/GeistMono-Bold.ttf);font-weight:700}
+:root{--ink:#eef0f6;--dim:#a3a9ba;--label:#8d93a6;--bg:#05060a;--c1:#7c5cff;--c2:#22d3ee;--c3:#f472b6;--line:rgba(255,255,255,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
+body{font-family:"Geist",system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
+#world{position:absolute;inset:0;transform-origin:50% 50%}
+.layer{position:absolute;inset:0}
+canvas.full{position:absolute;left:0;top:0;width:1920px;height:1080px}
+/* background */
+#bg{position:absolute;inset:-120px}
+.blob{position:absolute;border-radius:50%;filter:blur(120px);will-change:transform}
+#dots{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.075) 1px,transparent 1.4px);background-size:30px 30px;
+  -webkit-mask-image:radial-gradient(ellipse 60% 55% at 62% 52%,#000 0%,transparent 75%)}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse 85% 80% at 50% 50%,transparent 55%,rgba(0,0,0,.6) 100%)}
+#grain{position:absolute;inset:0;opacity:.055;mix-blend-mode:overlay;pointer-events:none}
+/* headline */
+.head{position:absolute;left:150px;width:640px}
+.chap{display:flex;align-items:center;gap:14px;font:600 15px/1 "Geist Mono";letter-spacing:.16em;color:var(--dim);text-transform:uppercase;margin-bottom:26px}
+.chap .n{color:var(--ink)}
+.chap .bar{height:1px;width:48px;background:linear-gradient(90deg,var(--c1),var(--c2),var(--c3));transform-origin:0 50%}
+.head h1{font:600 70px/1.02 "Geist";letter-spacing:-.035em;color:#f6f7fb}
+.head p{font:400 25px/1.42 "Geist";color:var(--dim);margin-top:24px;letter-spacing:-.005em;max-width:600px}
+.head p b{color:var(--ink);font-weight:500}
+.w{display:inline-block;will-change:transform,opacity,filter}
+.center{left:0;right:0;width:auto;text-align:center}
+.center .chap{justify-content:center}
+.center p{margin-left:auto;margin-right:auto;max-width:900px}
+/* files */
+.file{position:absolute;left:0;top:0;width:140px;display:flex;flex-direction:column;align-items:center;gap:12px;will-change:transform}
+.sheet{position:relative;width:88px;height:110px;border-radius:12px;background:linear-gradient(160deg,rgba(255,255,255,.17),rgba(255,255,255,.05));
+  border:1px solid rgba(255,255,255,.16);box-shadow:0 18px 40px -12px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.12);overflow:hidden;backdrop-filter:blur(10px)}
+.sheet:before{content:"";position:absolute;right:0;top:0;width:24px;height:24px;background:linear-gradient(225deg,transparent 50%,rgba(255,255,255,.22) 50%);border-bottom-left-radius:6px}
+.sheet i{position:absolute;left:14px;height:4px;border-radius:2px;background:rgba(255,255,255,.18)}
+.sheet .ext{position:absolute;left:10px;bottom:10px;font:700 12px/1 "Geist Mono";letter-spacing:.06em;padding:6px 8px;border-radius:6px;color:#fff}
+.sheet .img{position:absolute;inset:8px 8px 34px 8px;border-radius:6px}
+.fname{font:500 15px/1.2 "Geist";color:var(--ink);white-space:nowrap;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+.badge{position:absolute;right:-10px;top:-10px;min-width:30px;height:30px;border-radius:15px;background:#fff;color:#0a0b10;font:700 15px/30px "Geist Mono";text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+/* glass card */
+.glass{position:absolute;border-radius:28px;background:linear-gradient(180deg,rgba(22,24,34,.82),rgba(13,15,22,.86));border:1px solid rgba(255,255,255,.09);
+  box-shadow:0 40px 80px -30px rgba(0,0,0,.8),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(24px);overflow:hidden}
+/* app panel replica (node/panel.py look), drawn at 1x then scaled */
+.panel{position:absolute;width:400px;border-radius:24px;background:#0f1119;border:1px solid rgba(255,255,255,.1);box-shadow:0 40px 90px -20px rgba(0,0,0,.85);padding:18px 18px 22px;transform-origin:50% 50%}
+.ph{display:flex;align-items:center;height:44px;gap:4px;margin-bottom:14px}
+.ph .logo{width:20px;height:20px;border-radius:50%;background:conic-gradient(from 200deg,#7c5cff,#f472b6,#22d3ee,#7c5cff);margin:0 10px 0 6px;flex:none}
+.ph .tt{font:600 17px "Geist";flex:1;color:#f3f4f8}
+.ph .ic{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;color:#c9cdd8}
+.ph .ic.on{background:#1d2030}
+.ph svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dz{position:relative;height:200px;border-radius:18px;border:1.5px dashed rgba(255,255,255,.18);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.015)}
+.dz .up{width:46px;height:46px;border-radius:12px;background:#1b1e2b;display:grid;place-items:center;margin-bottom:14px}
+.dz .up svg{width:20px;height:20px;stroke:#e9ebf2;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dz b{font:600 15px "Geist";color:#eef0f6}.dz span{font:400 13px "Geist";color:#a3a9ba}.dz u{color:#eef0f6;text-underline-offset:3px}
+.lbl{font:600 11px "Geist";letter-spacing:.12em;color:#8d93a6;text-transform:uppercase;margin:22px 6px 10px}
+.row{display:flex;align-items:center;height:37px;padding:0 6px;font:400 14px "Geist";color:#eef0f6;border-radius:10px}
+.row .d{width:8px;height:8px;border-radius:50%;margin-right:14px;flex:none}
+.row .nm{flex:1}.row .cv{font:600 10.5px "Geist Mono";color:#c9cdd8;letter-spacing:.04em;margin-right:14px}.row .tm{font:400 12px "Geist";color:#8d93a6;width:52px;text-align:right}
+.tog{display:flex;align-items:center;justify-content:space-between;padding:0 6px;margin-top:14px;font:400 14px "Geist";color:#c9cdd8}
+.sw{width:40px;height:24px;border-radius:12px;background:#4f7cff;position:relative}.sw:after{content:"";position:absolute;right:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff}
+.fmt-file{display:flex;align-items:center;gap:12px;margin:0 6px 4px;font:400 14px "Geist"}
+.k{font:700 11px/1 "Geist Mono";letter-spacing:.06em;background:rgba(255,255,255,.12);border-radius:6px;padding:5px 7px;color:#eef0f6}
+.chips{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:0 6px}
+.chp{height:38px;border-radius:11px;border:1px solid rgba(255,255,255,.1);display:grid;place-items:center;font:600 12px "Geist Mono";letter-spacing:.05em;color:#eef0f6;background:rgba(255,255,255,.02)}
+.chp.sel{background:#f5f6fa;color:#0a0b10;border-color:transparent}
+.btn{height:44px;border-radius:22px;background:#f5f6fa;color:#0a0b10;display:grid;place-items:center;font:600 15px "Geist";margin:22px 6px 0;position:relative;overflow:hidden}
+.lnk{text-align:center;font:500 13.5px "Geist";color:#eef0f6;text-decoration:underline;text-underline-offset:4px;margin-top:14px}
+/* context menus */
+.menu{position:absolute;background:#12141c;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:6px;box-shadow:0 24px 60px -10px rgba(0,0,0,.8);font:400 14px "Geist";color:#eef0f6;transform-origin:0 0;min-width:230px}
+.menu .it{height:35px;display:flex;align-items:center;padding:0 22px 0 14px;border-radius:8px;gap:10px;position:relative}
+.menu .it .ar{margin-left:auto;color:#8d93a6;font-size:13px}
+.menu .it .val{margin-left:auto;font:500 12px "Geist Mono";color:#a3a9ba;letter-spacing:.04em}
+.menu .sep{height:1px;background:rgba(255,255,255,.08);margin:5px 8px}
+.menu .hl{position:absolute;left:6px;right:6px;height:35px;border-radius:8px;background:rgba(255,255,255,.08)}
+.menu .dis{color:#6b7184}
+.winmenu{background:#2c2c2c;border-color:rgba(255,255,255,.08);border-radius:10px;font:400 14px "Geist";min-width:300px;padding:5px}
+.winmenu .it{height:34px;padding-left:12px}
+.winmenu .ico{width:18px;height:18px;display:grid;place-items:center;opacity:.85}
+.winmenu .hl{background:rgba(255,255,255,.07)}
+/* cursor */
+#cursor{position:absolute;left:0;top:0;width:34px;height:34px;pointer-events:none;transform-origin:3px 2px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.45))}
+#ripple{position:absolute;left:0;top:0;width:60px;height:60px;border-radius:50%;border:2px solid rgba(255,255,255,.6)}
+/* hud */
+#hud{position:absolute;left:0;right:0;bottom:0;height:90px}
+#hud .brand{position:absolute;left:150px;bottom:44px;display:flex;align-items:center;gap:10px;font:500 14px "Geist";color:#a3a9ba}
+#hud .brand i{width:12px;height:12px;border-radius:50%;background:conic-gradient(from 200deg,#7c5cff,#f472b6,#22d3ee,#7c5cff)}
+#hud .cnt{position:absolute;right:150px;bottom:44px;font:600 13px "Geist Mono";letter-spacing:.14em;color:#8d93a6}
+#hud .cnt b{color:#eef0f6;font-weight:600}
+#hud .track{position:absolute;left:150px;right:150px;bottom:30px;height:1px;background:rgba(255,255,255,.08)}
+#hud .fill{position:absolute;left:0;top:0;height:1px;background:linear-gradient(90deg,#7c5cff,#22d3ee,#f472b6);transform-origin:0 50%}
+#hud .tick{position:absolute;top:-2px;width:1px;height:5px;background:rgba(255,255,255,.25)}
+.mono{font-family:"Geist Mono"}
+.toast{position:absolute;width:380px;border-radius:16px;background:#1a1c26;border:1px solid rgba(255,255,255,.1);box-shadow:0 24px 50px -10px rgba(0,0,0,.8);padding:16px 18px;display:flex;gap:14px;align-items:center}
+.toast .o{width:36px;height:36px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.3),rgba(12,14,21,.95) 62%),conic-gradient(#7c5cff,#f472b6,#22d3ee,#7c5cff);box-shadow:inset 0 0 0 2px #7c5cff}
+.toast b{display:block;font:600 14px "Geist";margin-bottom:3px}.toast span{font:400 13px "Geist";color:#a3a9ba}
+</style></head>
+<body>
+<div id="stage">
+  <div id="world">
+    <div id="bg"><div class="blob" id="b1"></div><div class="blob" id="b2"></div><div class="blob" id="b3"></div></div>
+    <div id="dots"></div>
+    <div id="vig"></div>
+    <canvas id="cv0" class="full" width="1920" height="1080"></canvas>
+    <div id="scenes"></div>
+    <canvas id="cv1" class="full" width="1920" height="1080"></canvas>
+  </div>
+  <div id="hud"><div class="brand"><i></i>FileMorph<span style="opacity:.5">·</span>How it works</div>
+    <div class="track"><div class="fill"></div></div><div class="cnt"><b>01</b> / 12</div></div>
+  <div id="ripple"></div>
+  <svg id="cursor" viewBox="0 0 34 34"><path d="M3 2 L3 26 L9.2 20.4 L13.4 30 L17.6 28.2 L13.5 18.8 L21.8 18.8 Z" fill="#fff" stroke="#0a0b10" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <canvas id="grain" width="1920" height="1080"></canvas>
+</div>
+<script src="lib.js"></script>
+<script src="scenes.js"></script>
+</body></html>
