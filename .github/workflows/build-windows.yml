@@ -81,6 +81,7 @@ jobs:
           $null = $p.Handle; $p.WaitForExit()
           if (-not (Test-Path $report)) {
             Get-Content (Join-Path $env:LOCALAPPDATA "FileMorph\logs\crash.log") -ErrorAction SilentlyContinue
+            Write-Output "::error title=Self-test::Frozen app wrote no self-test report (exit code $($p.ExitCode))"
             throw "Frozen app wrote no self-test report" }
           python packaging/check_selftest.py $report
           if ($LASTEXITCODE -ne 0) { throw "Frozen self-test failed" }

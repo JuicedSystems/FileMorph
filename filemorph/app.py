@@ -88,7 +88,8 @@ def selftest(report: Path) -> int:
             # otherwise ship unnoticed
             from .core.converters.trace_bw import LAST_ENGINE
             if LAST_ENGINE["name"] != "subpixel":
-                raise RuntimeError(f"B&W trace used the {LAST_ENGINE['name'] or 'unknown'} tracer")
+                raise RuntimeError(f"B&W trace used the {LAST_ENGINE['name'] or 'unknown'} tracer: "
+                                   + LAST_ENGINE.get("error", ""))
         step("png->trace", bw_trace)
 
         def scan_pdf():

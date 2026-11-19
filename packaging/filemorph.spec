@@ -44,6 +44,13 @@ a = Analysis(  # noqa: F821
               "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore"],
     noarchive=False,
 )
+# PyInstaller's own pymupdf hook (pyinstaller-hooks-contrib 2026.10+) collects the package's data
+# files again, including the layout module's models. With the module itself excluded, that leaves a
+# pymupdf/layout folder holding only data: Python then imports it as an empty package instead of
+# reporting it missing, and `import pymupdf` fails in the built app. So drop them here as well.
+a.datas = [x for x in a.datas if not _unused(x[0])]
+a.binaries = [x for x in a.binaries if not _unused(x[0])]
+
 pyz = PYZ(a.pure)  # noqa: F821
 
 exe = EXE(  # noqa: F821

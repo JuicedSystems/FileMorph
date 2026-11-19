@@ -25,7 +25,8 @@ DETAILS = ("bold", "balanced", "fine")
 _MIN_BLOB = {"bold": 90, "balanced": 24, "fine": 6}   # specks removed, in px at ~1600 px working size
 _SOFTEN = {"bold": 0.9, "balanced": 0.55, "fine": 0.35}  # grain removed before the cut-off (source px)
 _EPS = {"bold": 1.8, "balanced": 1.1, "fine": 0.6}     # polygon fallback smoothing
-LAST_ENGINE = {"name": ""}  # how the last picture was traced ("subpixel" or "polygon (fallback)")
+# how the last picture was traced ("subpixel" or "polygon (fallback)"), and why it fell back
+LAST_ENGINE = {"name": "", "error": ""}
 
 
 def _gray(im):
@@ -201,12 +202,13 @@ def trace_image(im, dst: Path, ctx: Ctx, out_size: tuple[int, int] | None = None
     try:
         paths = trace_fit.trace_paths(field, mask, detail, scale, unit=factor, contrast=contrast, loose=photo,
                                       tick=lambda f: ctx.progress(0.4 + 0.55 * f, "Tracing clean lines"))
-        LAST_ENGINE["name"] = "subpixel"
+        LAST_ENGINE.update(name="subpixel", error="")
     except Cancelled:
         raise
     except Exception:  # never fail a conversion over a fitting bug: plain outlines still work
+        import traceback
+        LAST_ENGINE.update(name="polygon (fallback)", error=traceback.format_exc(limit=8))
         paths = _polygon_paths(mask, detail, scale)
-        LAST_ENGINE["name"] = "polygon (fallback)"
     if not paths:
         raise ConversionError("Nothing to trace: the picture came out completely white. "
                               "Try Darkness: Darker.")

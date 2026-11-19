@@ -4,6 +4,7 @@ usage: python packaging/check_selftest.py selftest.json
 (Done in Python rather than PowerShell so the verdict is identical on PowerShell 5.1, 7 and CI.)
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,5 +37,12 @@ if tracer and "fallback" in tracer:
           "  machine. Conversions still work; building with Python 3.12 usually brings vtracer back.")
 if problems:
     print("\nSELF-TEST FAILED\n" + "\n\n".join(problems))
+    if os.environ.get("GITHUB_ACTIONS"):
+        # also as an annotation, so the reason shows on the run's summary page (not only in the log)
+        for p in problems:
+            head, _, rest = p.partition("\n")
+            msg = (rest.strip() or head)[-1800:]
+            msg = msg.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+            print(f"::error title=Self-test {head.rstrip(':')}::{msg}")
     sys.exit(1)
 print("Self-test passed.")
