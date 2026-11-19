@@ -3,6 +3,19 @@
 Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
+## 0.4.2
+**TRACE draws much cleaner lines.** Traced shapes now follow the original far more closely
+and come out smoother at the same time:
+- edges land within about a tenth of a pixel of the original (it used to be closer to a whole pixel)
+- corners stay sharp instead of being rounded or clipped, and straight lines come out truly straight
+- circles and curves are rounder, with fewer points, so they are easier to edit and quicker to cut
+- strokes keep their weight: thin lines and small text no longer come out fatter than the original
+- the dot on an "i", full stops and colons are kept, while dust and scanner grain are still removed
+- tracing a photo gives smoother, more hand-drawn looking lines
+- TRACE no longer nudges the whole drawing slightly down and to the right
+
+*Detail* (Bold, Balanced, Fine) and *Darkness* work as before.
+
 ## 0.4.1
 **A smaller orb, if you like.** Right-click the orb → **Orb size** → *Standard*, *Compact* or
 *Mini*. The format chips still open at full size when you drop a file, so they stay easy to read

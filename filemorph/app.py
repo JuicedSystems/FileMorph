@@ -84,6 +84,11 @@ def selftest(report: Path) -> int:
             text = res.read_text(encoding="utf-8")
             if "<path" not in text or 'fill="#ffffff"' in text.lower():
                 raise RuntimeError("B&W trace produced no black paths")
+            # the plain-outline fallback still "works", so a build that lost the real tracer would
+            # otherwise ship unnoticed
+            from .core.converters.trace_bw import LAST_ENGINE
+            if LAST_ENGINE["name"] != "subpixel":
+                raise RuntimeError(f"B&W trace used the {LAST_ENGINE['name'] or 'unknown'} tracer")
         step("png->trace", bw_trace)
 
         def scan_pdf():

@@ -1,4 +1,4 @@
-"""Focused checks for OCR, SHRINK, recipes and watch folders.
+"""Focused checks for OCR, SHRINK, recipes, watch folders and TRACE quality.
 
 usage: python tests/test_features.py [name-filter]
 Plain asserts, no test framework needed. Everything happens in a temp folder; recipes and the
@@ -524,6 +524,106 @@ def controller_recipes_scans_and_shrink_caption():
         c.tray.hide()
         s.clear()
         rc.save([])
+
+
+# ------------------------------------------------------------------ TRACE quality
+def _traced(scene: str, variant: str, detail: str = "balanced", options: dict | None = None):
+    """Trace one benchmark scene (tests/trace_bench.py) and measure it against the true shapes."""
+    import trace_bench as tb
+    d = fresh(f"trace_{scene}_{variant}_{detail}")
+    im, truth, corners, k, s = tb.build(scene, variant)
+    dst = d / "out.svg"
+    tb.run_trace(im, dst, detail, d, options)
+    return tb.measure(dst, truth, corners, k / s), dst, im
+
+
+@test
+def trace_follows_the_true_outline_within_a_fraction_of_a_pixel():
+    # shipping 0.4.1 scored about 0.4-1.0 px here (and 4 px on the large curves); see trace_bench.py
+    for scene, variant, limit in (("rings", "small", 0.12), ("rings", "large", 0.12), ("curves", "large", 0.12),
+                                  ("curves", "scan", 0.15), ("lines", "small", 0.18), ("text", "large", 0.12),
+                                  ("text", "jpeg", 0.18)):
+        m, _dst, _im = _traced(scene, variant)
+        assert m["edge"] < limit, f"{scene}/{variant}: outline is {m['edge']:.3f} px off on average"
+        assert m["p95"] < 0.6, f"{scene}/{variant}: worst spots are {m['p95']:.2f} px off"
+        assert m["iou"] > 0.9, f"{scene}/{variant}: shapes went missing (overlap {m['iou']:.2f})"
+
+
+@test
+def trace_keeps_corners_sharp_and_curves_smooth():
+    for variant in ("small", "large", "scan"):
+        m, _dst, _im = _traced("corners", variant)
+        assert m["corner"] < 0.35, f"corners/{variant}: corners rounded off by {m['corner']:.2f} px"
+    for variant in ("small", "scan"):
+        m, _dst, _im = _traced("rings", variant)
+        assert m["wobble"] < 0.09, f"rings/{variant}: circles wobble by {m['wobble']:.3f} px"
+        assert m["nodes"] < 250, f"rings/{variant}: {m['nodes']} segments for seven round shapes"
+
+
+@test
+def trace_keeps_stroke_weight():
+    # thin lines must not come out fatter or thinner than they were drawn
+    for scene, variant in (("lines", "small"), ("lines", "large"), ("text", "scan")):
+        m, _dst, _im = _traced(scene, variant)
+        assert abs(m["bias"]) < 0.12, f"{scene}/{variant}: strokes are off by {m['bias']:+.2f} px per side"
+
+
+@test
+def trace_svg_is_black_only_and_sized_like_the_picture():
+    import re
+    for detail in ("bold", "balanced", "fine"):
+        _m, dst, im = _traced("corners", "small", detail)
+        text = dst.read_text(encoding="utf-8")
+        assert set(re.findall(r'fill="([^"]+)"', text)) == {"#000000"}
+        w, h = im.size
+        assert f'width="{w}" height="{h}" viewBox="0 0 {w} {h}"' in text, text[:200]
+        xs = [float(v) for d in re.findall(r' d="([^"]+)"', text) for v in re.findall(r"-?\d+\.?\d*", d)]
+        assert -1 <= min(xs) and max(xs) <= max(w, h) + 1, "coordinates fall outside the picture"
+
+
+@test
+def trace_keeps_dots_and_drops_dust():
+    import numpy as np
+    import pymupdf
+    from PIL import Image
+    from filemorph.core.converters.trace_bw import to_black_white
+    d = fresh("trace_dots")
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=160)
+    page.insert_text((30, 90), "i.i.i: j!", fontsize=60, color=(0, 0, 0))
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(3, 3), colorspace=pymupdf.csGRAY, alpha=False)
+    a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width).copy()
+    rng = np.random.default_rng(3)
+    for _ in range(40):                                    # faint one-pixel dust
+        y, x = rng.integers(5, a.shape[0] - 5), rng.integers(1300, 1750)
+        a[y, x] = 120
+    im = Image.fromarray(a)
+    im.save(d / "dots.png")
+    bw, kind = to_black_white(im)
+    assert kind == "line art"
+    assert (bw[:, 1300:1750] == 255).all(), "dust was kept"
+    out = convert_file(d / "dots.png", "trace", d / "o")[0].read_text(encoding="utf-8")
+    shapes = out.count("<path")
+    # i i i j ! = 5 stems and 5 dots, two full stops, a colon = 2
+    assert shapes == 14, f"expected 14 separate marks (stems, dots, stops, colon), got {shapes}"
+
+
+@test
+def trace_survives_a_fitting_bug():
+    from filemorph.core.converters import trace_bw, trace_fit
+    d = fresh("trace_fallback")
+    import trace_bench as tb
+    im, *_ = tb.build("rings", "small")
+    im.save(d / "rings.png")
+    real = trace_fit.trace_paths
+    trace_fit.trace_paths = lambda *a, **k: 1 / 0
+    try:
+        out = convert_file(d / "rings.png", "trace", d / "o")[0].read_text(encoding="utf-8")
+    finally:
+        trace_fit.trace_paths = real
+    assert "<path" in out and trace_bw.LAST_ENGINE["name"] == "polygon (fallback)"
+    convert_file(d / "rings.png", "trace", d / "o2")
+    assert trace_bw.LAST_ENGINE["name"] == "subpixel"
 
 
 def main():

@@ -150,6 +150,9 @@ software and print.
 <img src="docs/media/trace.png" width="760" alt="Before and after: a scanned logo, a signature on lined paper and a white logo on black, each traced into a clean black SVG with the white removed">
 </div>
 
+- **Smooth and true to the original:** edges are placed to a fraction of a pixel using the picture's
+  own soft edge pixels, corners stay sharp, straight lines come out straight, and strokes keep
+  their weight. Small solid marks (the dot on an "i", a full stop) are kept; dust and grain are not
 - **Detail:** *Bold* for chunky, simple shapes · *Balanced* · *Fine* to keep small details
 - **Darkness:** *Lighter* · *Auto* · *Darker*, for when the automatic cut-off takes too much or too little
 - Light-on-dark designs (a white logo on black) are flipped automatically, so the design is what gets traced
@@ -326,7 +329,7 @@ filemorph/
     proc.py            runs bundled tools: no console windows, cancel, timeouts, cleanup
     updater.py         user-initiated updates (Velopack)
     shell.py           right-click menu, Send to, Open with
-    converters/        images · tracing · trace_bw (TRACE) · pdf · documents · sheets · media · office
+    converters/        images · tracing · trace_bw + trace_fit (TRACE) · pdf · documents · sheets · media · office
   ui/node/             the orb (node.py), panel (panel.py), controller.py, motion.py (springs)
   ui/                  conversion worker, classic window
 packaging/             PyInstaller spec, build.ps1, release-notes / icon / version-info generators
