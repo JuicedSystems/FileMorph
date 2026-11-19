@@ -3,7 +3,7 @@
 Each `## <version>` section becomes the "What's new" text users see in
 FileMorph → ⋯ → Check for updates. Write it for users, in Markdown.
 
-## 0.4.2
+## 0.4.3
 **TRACE draws much cleaner lines.** Traced shapes now follow the original far more closely
 and come out smoother at the same time:
 - edges land within about a tenth of a pixel of the original (it used to be closer to a whole pixel)
